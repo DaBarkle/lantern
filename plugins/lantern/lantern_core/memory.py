@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .paths import ensure_data_dir
 
+CHUNK_CHARS = 1000
 HALF_LIFE_DAYS = 90  # an item loses half its rank boost after this; old items still surface when they match well
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{1,}")
 _STOP = frozenset("the and for are but not you all can was were with this that from have has had what when where which who how why does did into about your they them then than there their our out also just like".split())
@@ -14,7 +15,7 @@ _STOP = frozenset("the and for are but not you all can was were with this that f
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,          -- turn | note | fact | tool
+  kind TEXT NOT NULL,          -- profile | fact | note | doc | turn
   source TEXT NOT NULL,        -- session id, file path, or pack name
   text TEXT NOT NULL,
   created REAL NOT NULL,       -- unix seconds
@@ -45,6 +46,21 @@ def add(db: sqlite3.Connection, kind: str, source: str, text: str, created: floa
         cur = db.execute("INSERT INTO items(kind, source, text, created) VALUES (?, ?, ?, ?)",
                          (kind, source, text.strip(), created or time.time()))
     return cur.lastrowid
+
+
+def add_document(db: sqlite3.Connection, kind: str, source: str, text: str, created: float | None = None) -> list[int]:
+    """Store long text as paragraph chunks, so each part gets its own match (the embedding model reads ~256 words)."""
+    chunks, cur = [], ""
+    for para in re.split(r"\n\s*\n", text.strip()):
+        if cur and len(cur) + len(para) > CHUNK_CHARS:
+            chunks.append(cur)
+            cur = ""
+        cur = f"{cur}\n\n{para}" if cur else para
+    if cur:
+        chunks.append(cur)
+    title = text.strip().splitlines()[0][:120] if text.strip() else ""
+    # Later chunks carry the document's first line so they still say what they are about.
+    return [add(db, kind, source, c if i == 0 else f"{title}\n...\n{c}", created) for i, c in enumerate(chunks)]
 
 
 def supersede(db: sqlite3.Connection, item_id: int) -> None:
@@ -90,3 +106,14 @@ def get(db: sqlite3.Connection, ids: list[int]) -> dict[int, dict]:
     marks = ",".join("?" * len(ids))
     rows = db.execute(f"SELECT id, kind, source, text, created FROM items WHERE status='active' AND id IN ({marks})", ids)
     return {r[0]: {"id": r[0], "kind": r[1], "source": r[2], "text": r[3], "created": r[4]} for r in rows}
+
+
+def profile(db: sqlite3.Connection, max_chars: int) -> str:
+    """The user's profile items, newest first, up to max_chars."""
+    out, used = [], 0
+    for (text,) in db.execute("SELECT text FROM items WHERE kind='profile' AND status='active' ORDER BY created DESC"):
+        if used + len(text) > max_chars:
+            break
+        out.append(text)
+        used += len(text)
+    return "\n\n".join(out)

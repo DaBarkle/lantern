@@ -55,6 +55,21 @@ class StoreTest(unittest.TestCase):
         self.assertIsInstance(memory.search(self.db, 'said "hello" OR NOT * ) ('), list)
         self.assertEqual(memory.search(self.db, "?? !!"), [])
 
+    def test_long_document_is_chunked_with_title(self):
+        body = "# Family\n\n" + "\n\n".join(f"para {i} " + "x" * 300 for i in range(8))
+        ids = memory.add_document(self.db, "fact", "f.md", body)
+        self.assertGreater(len(ids), 1)
+        last = self.db.execute("SELECT text FROM items WHERE id=?", (ids[-1],)).fetchone()[0]
+        self.assertTrue(last.startswith("# Family"))
+        self.assertTrue(all(len(t) < memory.CHUNK_CHARS + 500 for (t,) in self.db.execute("SELECT text FROM items")))
+
+    def test_profile_respects_budget(self):
+        memory.add(self.db, "profile", "u", "Name: Sam")
+        memory.add(self.db, "profile", "u", "y" * 5000)
+        memory.add(self.db, "fact", "u", "not profile")
+        self.assertEqual(memory.profile(self.db, 100), "")  # newest item alone is over budget
+        self.assertNotIn("not profile", memory.profile(self.db, 10000))
+
 
 class RecallCaptureTest(unittest.TestCase):
     def setUp(self):

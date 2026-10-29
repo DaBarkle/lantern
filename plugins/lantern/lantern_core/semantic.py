@@ -26,8 +26,8 @@ def write_token(data: Path) -> str:
     return token
 
 
-def search(data: Path, query: str, limit: int = 30) -> list[tuple[int, float]]:
-    """[(item id, cosine)] from the warm server, or [] if it is not running or too slow."""
+def search(data: Path, query: str, limit: int = 30) -> list[tuple[int, float]] | None:
+    """[(item id, cosine)] from the warm server, or None if it is not running or too slow."""
     try:
         token = (data / "serve.token").read_text().strip()
         with socket.create_connection(("127.0.0.1", port_for(data)), timeout=BUDGET_SECONDS) as s:
@@ -36,4 +36,4 @@ def search(data: Path, query: str, limit: int = 30) -> list[tuple[int, float]]:
             reply = json.loads(s.makefile("r", encoding="utf-8").readline())
         return [(int(i), float(c)) for i, c in reply.get("hits", [])]
     except (OSError, ValueError):
-        return []
+        return None

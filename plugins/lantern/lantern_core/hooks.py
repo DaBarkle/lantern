@@ -1,5 +1,6 @@
 """Claude Code hook entry points. Each reads the event JSON on stdin and may print a JSON reply."""
 import json
+import math
 import sys
 import time
 
@@ -9,7 +10,11 @@ from .paths import ensure_data_dir
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
 RECALL_LIMIT = 3
 CAPTURE_CHARS = 2000
-SEMANTIC_FLOOR = 0.45  # MiniLM cosine; Hermes calibrated 0.47 on its own prompts
+SEMANTIC_FLOOR = 0.45  # MiniLM cosine for an item to be a candidate
+SEMANTIC_GATE = 0.5  # best cosine below this = memory has nothing on the topic (eval: absent facts top out at 0.41)
+KEYWORD_SHARE = 0.5
+PROFILE_CHARS = 3000
+KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 
 
 def _context(event: str, text: str) -> dict:
@@ -27,7 +32,16 @@ def _log(name: str, record: dict) -> None:
 
 def session_start(payload: dict) -> dict | None:
     d = ensure_data_dir()
-    return _context("SessionStart", f"Lantern {__version__} is active. Its data folder is {d}.")
+    lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
+    db = memory.connect()
+    try:
+        profile = memory.profile(db, PROFILE_CHARS)
+    finally:
+        db.close()
+    if profile:
+        # Who the user is matters on every turn, so it is loaded once rather than searched for.
+        lines += ["", "What Lantern knows about the user:", profile]
+    return _context("SessionStart", "\n".join(lines))
 
 
 def user_prompt_submit(payload: dict) -> dict | None:
@@ -37,12 +51,17 @@ def user_prompt_submit(payload: dict) -> dict | None:
     # The previous message carries the topic for short follow-ups ("are they all direct?").
     query = prompt + "\n" + transcript.previous_user(payload.get("transcript_path", ""))
     want = set(memory.terms(query))
+    # A keyword hit must share most of the query's words; common words alone ("operator", "server") match everything.
+    need = max(2, math.ceil(KEYWORD_SHARE * len(want))) if len(want) > 1 else 1
     db = memory.connect()
     try:
-        # Keyword hits must share 2 words with the query (or the one word a short query has).
         keyword = [h["id"] for h in memory.search(db, query, limit=RECALL_LIMIT * 5)
-                   if len(want & set(memory.terms(h["text"]))) >= min(2, len(want))]
-        meaning = [i for i, cos in semantic.search(ensure_data_dir(), query) if cos >= SEMANTIC_FLOOR]
+                   if len(want & set(memory.terms(h["text"]))) >= need]
+        found = semantic.search(ensure_data_dir(), query)
+        meaning = [i for i, cos in found or [] if cos >= SEMANTIC_FLOOR]
+        # With the server up, its best cosine decides whether memory has anything on this at all.
+        if found is not None and (not found or found[0][1] < SEMANTIC_GATE):
+            keyword, meaning = [], []
         # Reciprocal rank fusion: items found by both searches rise to the top.
         fused: dict[int, float] = {}
         for ranked in (keyword, meaning):
@@ -52,7 +71,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
     finally:
         db.close()
     # This session's turns are already in context.
-    hits = [rows[i] for i in sorted(fused, key=fused.get, reverse=True)
+    order = sorted(fused, key=lambda i: fused[i] * KIND_WEIGHT.get(rows.get(i, {}).get("kind"), 1.0), reverse=True)
+    hits = [rows[i] for i in order
             if i in rows and rows[i]["source"] != payload.get("session_id")][:RECALL_LIMIT]
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
