@@ -17,9 +17,12 @@ MIN_CHARS = 40  # log lines like "User requested to proceed." carry nothing
 PROFILE_CHARS = 3000
 RULES_CHARS = 12000
 INDEX_CHARS = 16000  # one line per curated note, so a session knows what memory holds before it asks
+TOP_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = 48
 KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
+CURATED = {"fact", "rule", "doc"}
+CURATED_MIN_TERMS = 9
 
 
 def _context(event: str, text: str) -> dict:
@@ -84,16 +87,22 @@ def user_prompt_submit(payload: dict) -> dict | None:
     need = max(2, math.ceil(KEYWORD_SHARE * len(want))) if len(want) > 1 else 1
     db = memory.connect()
     try:
-        keyword = [h["id"] for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
+        kw_hits = [h for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
+        keyword = [h["id"] for h in kw_hits]
         found = semantic.search(ensure_data_dir(), query)
         meaning = [i for i, cos in found or [] if cos >= SEMANTIC_FLOOR]
-        # With the server up, its best cosine decides whether memory has anything on this at all.
-        if found is not None and (not found or found[0][1] < SEMANTIC_GATE):
-            keyword, meaning = [], []
-        if found is not None:  # eval: keyword-only hits with no meaning match were mostly unrelated
-            meaning_ids = set(meaning)
-            keyword = [i for i in keyword if i in meaning_ids]
+        if found is not None:
+            # With the server up, its best cosine decides whether memory has anything on this at all, and keyword-only
+            # hits must also match on meaning (eval: those were mostly unrelated turn logs). Curated notes and documents
+            # that share most of the prompt's words are kept either way: they are written to be precise (eval: an
+            # as-built section on quality profiles scored 0.47 and was dropped).
+            # Short questions ("the operator's shoe size?") share two words with almost anything, so only longer
+            # prompts can vouch for a curated match on words alone.
+            curated = [h["id"] for h in kw_hits if h["kind"] in CURATED] if len(want) >= CURATED_MIN_TERMS else []
+            if not found or found[0][1] < SEMANTIC_GATE:
+                meaning = []
+            keyword = [i for i in keyword if i in set(meaning)] + [i for i in curated if i not in set(meaning)]
         # Reciprocal rank fusion: items found by both searches rise to the top.
         fused: dict[int, float] = {}
         for ranked in (keyword, meaning):
@@ -122,9 +131,10 @@ def user_prompt_submit(payload: dict) -> dict | None:
     lines = []
     if hits:
         lines.append("Lantern recalled these past notes as possibly relevant:")
-        for h in hits:
+        for n, h in enumerate(hits):
             day = time.strftime("%Y-%m-%d", time.localtime(h["created"]))
-            lines.append(f"- [{day}, {h['kind']}] {h['text'][:400]}")
+            # The best match is shown at length: a note's fix or root cause often comes after its symptom.
+            lines.append(f"- [{day}, {h['kind']}] {h['text'][:TOP_CHARS if n == 0 else 400]}")
         if titles:
             lines.append("Also possibly relevant:")
             lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
