@@ -9,13 +9,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lantern_core import approvals, doctor, hooks, memory, shield, stage  # noqa: E402
+from lantern_core import approvals, discovery, doctor, hooks, memory, shield, stage  # noqa: E402
 
 USAGE = """usage: lantern.py hook <name>
        lantern.py doctor
        lantern.py stage list | note <message> [--key K] [--score 1-10] [--days N] | resolve <key>
        lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME
-       lantern.py approve setup | "<question>" [--timeout SECONDS]"""
+       lantern.py approve setup | "<question>" [--timeout SECONDS]
+       lantern.py depth [1-4] | discover [--accept all|1,2,...]"""
 
 
 def stage_cli(argv: list[str]) -> int:
@@ -47,6 +48,8 @@ def main(argv: list[str]) -> int:
         return stage_cli(argv[1:])
     if argv[:1] == ["secret"]:
         return shield.cli(argv[1:])
+    if argv[:1] in (["depth"], ["discover"]):
+        return discovery.cli(argv if argv[0] == "depth" else argv[1:])
     if argv[:1] == ["approve"]:
         return approvals.cli(argv[1:])
     print(USAGE, file=sys.stderr)

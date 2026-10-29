@@ -6,7 +6,7 @@ old finding dropped. So an alert lives exactly as long as its problem.
 import json
 import time
 
-from . import memory, semantic, shield, stage
+from . import discovery, memory, semantic, shield, stage
 from .paths import ensure_data_dir
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -81,7 +81,12 @@ CHECKS = {"data-dir": check_data_dir, "semantic": check_semantic, "memory-fresh"
 
 def run_all() -> list[tuple[str, str, str]]:
     results = []
-    for name, check in CHECKS.items():
+    checks = dict(CHECKS)
+    for cap_id, cap in discovery.settings().get("capabilities", {}).items():
+        if cap.get("check"):  # each accepted capability is checked for what it is for: being up
+            checks[f"cap:{cap_id}"] = lambda c=cap: ((OK, f"{c['name']} is up") if discovery.healthy(c["check"])
+                                                    else (WARN, f"{c['name']} is not responding"))
+    for name, check in checks.items():
         try:
             status, msg = check()
         except Exception as e:  # a broken check is itself a finding
