@@ -1,0 +1,7 @@
+[
+  {
+    "name": "memory-server",
+    "command": "uv run --no-project --quiet \"${CLAUDE_PLUGIN_ROOT}/serve.py\"",
+    "description": "Keeps Lantern's memory search warm"
+  }
+]

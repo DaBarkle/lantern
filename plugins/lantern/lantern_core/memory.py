@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS items (
   source TEXT NOT NULL,        -- session id, file path, or pack name
   text TEXT NOT NULL,
   created REAL NOT NULL,       -- unix seconds
-  status TEXT NOT NULL DEFAULT 'active'  -- active | superseded
+  status TEXT NOT NULL DEFAULT 'active',  -- active | superseded
+  vec BLOB                     -- float32 embedding, filled by the memory server
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(text, content='items', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
@@ -34,6 +35,8 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     db = sqlite3.connect(path or ensure_data_dir() / "memory.db", timeout=5)
     db.execute("PRAGMA journal_mode=WAL")  # several sessions write at once
     db.executescript(SCHEMA)
+    if "vec" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
+        db.execute("ALTER TABLE items ADD COLUMN vec BLOB")  # databases made before semantic search
     return db
 
 
@@ -78,3 +81,12 @@ def search(db: sqlite3.Connection, query: str, limit: int = 5, now: float | None
         hits.append({"id": rid, "kind": kind, "source": source, "text": text, "created": created, "score": score})
     hits.sort(key=lambda h: h["score"], reverse=True)
     return hits[:limit]
+
+
+def get(db: sqlite3.Connection, ids: list[int]) -> dict[int, dict]:
+    """Active items by id."""
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    rows = db.execute(f"SELECT id, kind, source, text, created FROM items WHERE status='active' AND id IN ({marks})", ids)
+    return {r[0]: {"id": r[0], "kind": r[1], "source": r[2], "text": r[3], "created": r[4]} for r in rows}

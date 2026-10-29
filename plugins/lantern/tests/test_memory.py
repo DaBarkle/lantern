@@ -97,6 +97,17 @@ class RecallCaptureTest(unittest.TestCase):
         log = (Path(self.tmp.name) / "recall.jsonl").read_text().splitlines()
         self.assertEqual(json.loads(log[-1])["fired"], False)
 
+    def test_semantic_only_hit_is_recalled_and_server_down_is_harmless(self):
+        db = memory.connect()
+        i = memory.add(db, "note", "s1", "media server stutters when subtitles force re-encoding")
+        db.close()
+        prompt = {"session_id": "s2", "prompt": "why is playback choppy with captions on"}
+        with mock.patch.object(hooks.semantic, "search", return_value=[(i, 0.62)]):
+            self.assertIn("stutters", self.call("user-prompt-submit", prompt)["hookSpecificOutput"]["additionalContext"])
+        with mock.patch.object(hooks.semantic, "search", return_value=[(i, 0.2)]):  # below the floor
+            self.assertIsNone(self.call("user-prompt-submit", prompt))
+        self.assertIsNone(self.call("user-prompt-submit", prompt))  # no server running: keyword only, no crash
+
 
 if __name__ == "__main__":
     unittest.main()

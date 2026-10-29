@@ -3,12 +3,13 @@ import json
 import sys
 import time
 
-from . import __version__, memory, transcript
+from . import __version__, memory, semantic, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
 RECALL_LIMIT = 3
 CAPTURE_CHARS = 2000
+SEMANTIC_FLOOR = 0.45  # MiniLM cosine; Hermes calibrated 0.47 on its own prompts
 
 
 def _context(event: str, text: str) -> dict:
@@ -38,13 +39,23 @@ def user_prompt_submit(payload: dict) -> dict | None:
     want = set(memory.terms(query))
     db = memory.connect()
     try:
-        hits = [h for h in memory.search(db, query, limit=RECALL_LIMIT * 3)
-                if h["source"] != payload.get("session_id")]  # this session's turns are already in context
+        # Keyword hits must share 2 words with the query (or the one word a short query has).
+        keyword = [h["id"] for h in memory.search(db, query, limit=RECALL_LIMIT * 5)
+                   if len(want & set(memory.terms(h["text"]))) >= min(2, len(want))]
+        meaning = [i for i, cos in semantic.search(ensure_data_dir(), query) if cos >= SEMANTIC_FLOOR]
+        # Reciprocal rank fusion: items found by both searches rise to the top.
+        fused: dict[int, float] = {}
+        for ranked in (keyword, meaning):
+            for rank, i in enumerate(ranked):
+                fused[i] = fused.get(i, 0.0) + 1 / (60 + rank)
+        rows = memory.get(db, list(fused))
     finally:
         db.close()
-    # A hit must share 2 words with the query (or the one word a short query has).
-    hits = [h for h in hits if len(want & set(memory.terms(h["text"]))) >= min(2, len(want))][:RECALL_LIMIT]
-    _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits]})
+    # This session's turns are already in context.
+    hits = [rows[i] for i in sorted(fused, key=fused.get, reverse=True)
+            if i in rows and rows[i]["source"] != payload.get("session_id")][:RECALL_LIMIT]
+    _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
+                    "keyword": len(keyword), "semantic": len(meaning)})
     if not hits:
         return None
     lines = ["Lantern recalled these past notes as possibly relevant:"]
