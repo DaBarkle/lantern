@@ -90,6 +90,8 @@ def main() -> int:
     data = ensure_data_dir()
     port = semantic.port_for(data)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform != "win32":  # rebind straight after a restart; on Windows this flag would let two servers share
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError:

@@ -13,6 +13,7 @@ CAPTURE_CHARS = 2000
 SEMANTIC_FLOOR = 0.45  # MiniLM cosine for an item to be a candidate
 SEMANTIC_GATE = 0.5  # best cosine below this = memory has nothing on the topic (eval: absent facts top out at 0.41)
 KEYWORD_SHARE = 0.5
+MIN_CHARS = 40  # log lines like "User requested to proceed." carry nothing
 PROFILE_CHARS = 3000
 KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 
@@ -65,6 +66,9 @@ def user_prompt_submit(payload: dict) -> dict | None:
         # With the server up, its best cosine decides whether memory has anything on this at all.
         if found is not None and (not found or found[0][1] < SEMANTIC_GATE):
             keyword, meaning = [], []
+        if found is not None:  # eval: keyword-only hits with no meaning match were mostly unrelated
+            meaning_ids = set(meaning)
+            keyword = [i for i in keyword if i in meaning_ids]
         # Reciprocal rank fusion: items found by both searches rise to the top.
         fused: dict[int, float] = {}
         for ranked in (keyword, meaning):
@@ -76,8 +80,17 @@ def user_prompt_submit(payload: dict) -> dict | None:
         db.close()
     # This session's turns are already in context.
     order = sorted(fused, key=lambda i: fused[i] * KIND_WEIGHT.get(rows.get(i, {}).get("kind"), 1.0), reverse=True)
-    hits = [rows[i] for i in order
-            if i in rows and rows[i]["source"] != payload.get("session_id")][:RECALL_LIMIT]
+    hits, seen = [], set()
+    for i in order:
+        h = rows.get(i)
+        if not h or h["source"] == payload.get("session_id") or len(h["text"]) < MIN_CHARS:
+            continue
+        if h["text"][:200] in seen:  # the same note stored twice
+            continue
+        seen.add(h["text"][:200])
+        hits.append(h)
+        if len(hits) == RECALL_LIMIT:
+            break
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
     lines = []
