@@ -126,3 +126,26 @@ class RecallCaptureTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionStartContextTest(unittest.TestCase):
+    def test_rules_and_last_session_are_loaded(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "rule", "pack", "Never change Tailscale on bazzite.\n\nWhy: remote access.")
+            memory.add(db, "turn", "old-session", "User: fix the AirPods\nAssistant: restarted WirePlumber", created=time.time() - 3600)
+            memory.add(db, "turn", "hermes:abc", "imported turn, not a session", created=time.time())
+            db.close()
+            ctx = hooks.session_start({"session_id": "new"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("- Never change Tailscale on bazzite.", ctx)
+            self.assertNotIn("Why: remote access", ctx)  # one line per rule
+            self.assertIn("restarted WirePlumber", ctx)
+            self.assertNotIn("imported turn", ctx)
+
+    def test_old_sessions_are_not_resumed(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "turn", "s1", "User: something from last week", created=time.time() - 7 * DAY)
+            db.close()
+            ctx = hooks.session_start({"session_id": "new"})["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("last week", ctx)

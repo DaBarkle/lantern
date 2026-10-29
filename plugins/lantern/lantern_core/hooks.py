@@ -15,6 +15,8 @@ SEMANTIC_GATE = 0.5  # best cosine below this = memory has nothing on the topic 
 KEYWORD_SHARE = 0.5
 MIN_CHARS = 40  # log lines like "User requested to proceed." carry nothing
 PROFILE_CHARS = 3000
+RULES_CHARS = 12000  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
+RESUME_HOURS = 48
 KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 
 
@@ -37,12 +39,19 @@ def session_start(payload: dict) -> dict | None:
     db = memory.connect()
     try:
         profile = memory.profile(db, PROFILE_CHARS)
+        rules = memory.rules(db, RULES_CHARS)
+        previous = memory.last_session(db, payload.get("session_id", "?"), RESUME_HOURS * 3600)
         attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
     if profile:
         # Who the user is matters on every turn, so it is loaded once rather than searched for.
         lines += ["", "What Lantern knows about the user:", profile]
+    if rules:
+        # Standing rules apply everywhere, so like the profile they are loaded, not searched for.
+        lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
+    if previous:
+        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in previous]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]
     return _context("SessionStart", "\n".join(lines))

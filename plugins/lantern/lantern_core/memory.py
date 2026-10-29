@@ -15,7 +15,7 @@ _STOP = frozenset("the and for are but not you all can was were with this that f
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,          -- profile | fact | note | doc | turn
+  kind TEXT NOT NULL,          -- profile | rule | fact | note | doc | turn
   source TEXT NOT NULL,        -- session id, file path, or pack name
   text TEXT NOT NULL,
   created REAL NOT NULL,       -- unix seconds
@@ -117,3 +117,27 @@ def profile(db: sqlite3.Connection, max_chars: int) -> str:
         out.append(text)
         used += len(text)
     return "\n\n".join(out)
+
+
+def rules(db: sqlite3.Connection, max_chars: int) -> list[str]:
+    """One line per standing rule or preference (its first line), newest first, up to max_chars."""
+    out, used = [], 0
+    # A long rule is stored in chunks; its first chunk (lowest id) opens with the summary line.
+    for (text,) in db.execute("SELECT text FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind='rule' "
+                              "AND status='active' GROUP BY source) ORDER BY created DESC"):
+        line = text.strip().splitlines()[0][:300] if text.strip() else ""
+        if not line or used + len(line) > max_chars:
+            continue
+        out.append(line)
+        used += len(line)
+    return out
+
+
+def last_session(db: sqlite3.Connection, exclude: str, within_s: float, n: int = 2) -> list[dict]:
+    """The last n turns of the most recent other session, if it ended within within_s seconds."""
+    row = db.execute("SELECT source, max(created) FROM items WHERE kind='turn' AND source != ? AND source NOT LIKE '%:%' "
+                     "GROUP BY source ORDER BY max(created) DESC LIMIT 1", (exclude,)).fetchone()
+    if not row or row[1] is None or time.time() - row[1] > within_s:
+        return []
+    rows = db.execute("SELECT text, created FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT ?", (row[0], n))
+    return [{"text": t, "created": c} for t, c in reversed(rows.fetchall())]
