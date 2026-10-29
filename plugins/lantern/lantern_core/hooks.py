@@ -15,7 +15,9 @@ SEMANTIC_GATE = 0.5  # best cosine below this = memory has nothing on the topic 
 KEYWORD_SHARE = 0.5
 MIN_CHARS = 40  # log lines like "User requested to proceed." carry nothing
 PROFILE_CHARS = 3000
-RULES_CHARS = 12000  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
+RULES_CHARS = 12000
+INDEX_CHARS = 8000  # one line per curated note, so a session knows what memory holds before it asks
+TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = 48
 KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 
@@ -40,6 +42,7 @@ def session_start(payload: dict) -> dict | None:
     try:
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
+        index = memory.rules(db, INDEX_CHARS, kind="fact")
         session = payload.get("session_id", "?")
         previous = memory.last_session(db, session, RESUME_HOURS * 3600)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
@@ -53,6 +56,8 @@ def session_start(payload: dict) -> dict | None:
     if rules:
         # Standing rules apply everywhere, so like the profile they are loaded, not searched for.
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
+    if index:
+        lines += ["", "Notes Lantern holds (one line each; recall brings in detail when a prompt matches):"] + [f"- {i}" for i in index]
     caps = discovery.settings().get("capabilities", {})
     if caps:
         lines += ["", "On this machine (accepted by the user in discovery):",
@@ -79,7 +84,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
     need = max(2, math.ceil(KEYWORD_SHARE * len(want))) if len(want) > 1 else 1
     db = memory.connect()
     try:
-        keyword = [h["id"] for h in memory.search(db, query, limit=RECALL_LIMIT * 5)
+        keyword = [h["id"] for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
         found = semantic.search(ensure_data_dir(), query)
         meaning = [i for i, cos in found or [] if cos >= SEMANTIC_FLOOR]
@@ -109,8 +114,9 @@ def user_prompt_submit(payload: dict) -> dict | None:
             continue
         seen.add(h["text"][:200])
         hits.append(h)
-        if len(hits) == RECALL_LIMIT:
+        if len(hits) == RECALL_LIMIT + TITLE_LIMIT:
             break
+    hits, titles = hits[:RECALL_LIMIT], hits[RECALL_LIMIT:]
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
     lines = []
@@ -119,6 +125,10 @@ def user_prompt_submit(payload: dict) -> dict | None:
         for h in hits:
             day = time.strftime("%Y-%m-%d", time.localtime(h["created"]))
             lines.append(f"- [{day}, {h['kind']}] {h['text'][:400]}")
+        if titles:
+            lines.append("Also possibly relevant:")
+            lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
+                      for h in titles]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
     return _context("UserPromptSubmit", "\n".join(lines)) if lines else None

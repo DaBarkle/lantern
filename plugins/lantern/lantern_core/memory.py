@@ -119,12 +119,12 @@ def profile(db: sqlite3.Connection, max_chars: int) -> str:
     return "\n\n".join(out)
 
 
-def rules(db: sqlite3.Connection, max_chars: int) -> list[str]:
-    """One line per standing rule or preference (its first line), newest first, up to max_chars."""
+def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule") -> list[str]:
+    """One line per item of this kind (its first line), newest first, up to max_chars."""
     out, used = [], 0
-    # A long rule is stored in chunks; its first chunk (lowest id) opens with the summary line.
-    for (text,) in db.execute("SELECT text FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind='rule' "
-                              "AND status='active' GROUP BY source) ORDER BY created DESC"):
+    # A long item is stored in chunks; its first chunk (lowest id) opens with the summary line.
+    for (text,) in db.execute("SELECT text FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
+                              "AND status='active' GROUP BY source) ORDER BY created DESC", (kind,)):
         line = text.strip().splitlines()[0][:300] if text.strip() else ""
         if not line or used + len(line) > max_chars:
             continue

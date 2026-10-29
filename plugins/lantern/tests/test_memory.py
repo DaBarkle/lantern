@@ -165,3 +165,21 @@ class WorkingMemoryTest(unittest.TestCase):
             fresh = hooks.session_start({"session_id": "s2", "source": "startup"})["hookSpecificOutput"]["additionalContext"]
             self.assertNotIn("working memory", fresh)
             self.assertIn("last session left off", fresh)
+
+
+class RecallTitlesTest(unittest.TestCase):
+    def test_extra_matches_come_as_titles(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            for n in range(6):
+                memory.add(db, "note", f"s{n}", f"Plex transcoding fix number {n} for subtitles\n" + "detail " * 30)
+            memory.add(db, "fact", "pack", "Plex runs as container-plex.service on bazzite\n\nmore")
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                ctx = hooks.user_prompt_submit({"prompt": "plex transcoding subtitles fix", "session_id": "x"})
+            text = ctx["hookSpecificOutput"]["additionalContext"]
+            full, extra = text.split("Also possibly relevant:")
+            self.assertEqual(full.count("\n- ["), 3)
+            self.assertNotIn("detail detail", extra)  # titles only
+            start = hooks.session_start({"session_id": "y"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("- Plex runs as container-plex.service on bazzite", start)
