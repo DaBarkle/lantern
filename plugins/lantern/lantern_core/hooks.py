@@ -4,7 +4,7 @@ import math
 import sys
 import time
 
-from . import __version__, memory, semantic, transcript
+from . import __version__, memory, semantic, shield, stage, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -36,11 +36,14 @@ def session_start(payload: dict) -> dict | None:
     db = memory.connect()
     try:
         profile = memory.profile(db, PROFILE_CHARS)
+        attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
     if profile:
         # Who the user is matters on every turn, so it is loaded once rather than searched for.
         lines += ["", "What Lantern knows about the user:", profile]
+    if attention:
+        lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]
     return _context("SessionStart", "\n".join(lines))
 
 
@@ -68,6 +71,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
             for rank, i in enumerate(ranked):
                 fused[i] = fused.get(i, 0.0) + 1 / (60 + rank)
         rows = memory.get(db, list(fused))
+        attention = stage.delta(db, payload.get("session_id", "?"))
     finally:
         db.close()
     # This session's turns are already in context.
@@ -76,13 +80,15 @@ def user_prompt_submit(payload: dict) -> dict | None:
             if i in rows and rows[i]["source"] != payload.get("session_id")][:RECALL_LIMIT]
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
-    if not hits:
-        return None
-    lines = ["Lantern recalled these past notes as possibly relevant:"]
-    for h in hits:
-        day = time.strftime("%Y-%m-%d", time.localtime(h["created"]))
-        lines.append(f"- [{day}, {h['kind']}] {h['text'][:400]}")
-    return _context("UserPromptSubmit", "\n".join(lines))
+    lines = []
+    if hits:
+        lines.append("Lantern recalled these past notes as possibly relevant:")
+        for h in hits:
+            day = time.strftime("%Y-%m-%d", time.localtime(h["created"]))
+            lines.append(f"- [{day}, {h['kind']}] {h['text'][:400]}")
+    if attention:
+        lines += ["Lantern's Stage changed since your last turn:", attention]
+    return _context("UserPromptSubmit", "\n".join(lines)) if lines else None
 
 
 def stop(payload: dict) -> dict | None:
@@ -98,7 +104,8 @@ def stop(payload: dict) -> dict | None:
     return None
 
 
-HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop}
+HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop,
+            "pre-tool-use": shield.pre_tool_use}
 
 
 def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
