@@ -4,7 +4,7 @@ import math
 import sys
 import time
 
-from . import __version__, memory, semantic, shield, stage, transcript
+from . import __version__, discovery, memory, semantic, shield, stage, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -40,7 +40,10 @@ def session_start(payload: dict) -> dict | None:
     try:
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
-        previous = memory.last_session(db, payload.get("session_id", "?"), RESUME_HOURS * 3600)
+        session = payload.get("session_id", "?")
+        previous = memory.last_session(db, session, RESUME_HOURS * 3600)
+        # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
+        own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
@@ -50,7 +53,15 @@ def session_start(payload: dict) -> dict | None:
     if rules:
         # Standing rules apply everywhere, so like the profile they are loaded, not searched for.
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
-    if previous:
+    caps = discovery.settings().get("capabilities", {})
+    if caps:
+        lines += ["", "On this machine (accepted by the user in discovery):",
+                  ", ".join(sorted(c["name"] for c in caps.values()))]
+    if own:
+        lines += ["", "This session's working memory (from before the compaction):",
+                  f"- Started with: {own[0][:400]}",
+                  f"- Names in play: {', '.join(memory.identifiers(own))}"] + [f"- Recent: {t[:500]}" for t in own[-3:]]
+    elif previous:
         lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in previous]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]

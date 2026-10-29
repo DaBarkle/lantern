@@ -149,3 +149,19 @@ class SessionStartContextTest(unittest.TestCase):
             db.close()
             ctx = hooks.session_start({"session_id": "new"})["hookSpecificOutput"]["additionalContext"]
             self.assertNotIn("last week", ctx)
+
+
+class WorkingMemoryTest(unittest.TestCase):
+    def test_compaction_brings_back_this_sessions_details(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "turn", "s1", "User: the voice companion hangs\nAssistant: it listens on port 8767, unit `voice-companion.service`")
+            memory.add(db, "turn", "s1", "User: archive it\nAssistant: moved to ~/hermes-archive/20261030/ and see DAY-221")
+            db.close()
+            ctx = hooks.session_start({"session_id": "s1", "source": "compact"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Started with: User: the voice companion hangs", ctx)
+            for name in ("voice-companion.service", "~/hermes-archive/20261030/", "DAY-221"):
+                self.assertIn(name, ctx)
+            fresh = hooks.session_start({"session_id": "s2", "source": "startup"})["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("working memory", fresh)
+            self.assertIn("last session left off", fresh)

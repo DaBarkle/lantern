@@ -141,3 +141,22 @@ def last_session(db: sqlite3.Connection, exclude: str, within_s: float, n: int =
         return []
     rows = db.execute("SELECT text, created FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT ?", (row[0], n))
     return [{"text": t, "created": c} for t, c in reversed(rows.fetchall())]
+
+
+_IDENT = re.compile(r"`([^`\n]{3,80})`|\b([A-Z]{2,}-\d+)\b|\b([0-9a-f]{7,12})\b|((?:~|/)[\w./-]{4,})|\b([\w.-]+\.(?:py|sh|md|json|ya?ml|toml|service|timer|conf))\b")
+
+
+def session_turns(db: sqlite3.Connection, session: str) -> list[str]:
+    return [t for (t,) in db.execute("SELECT text FROM items WHERE kind='turn' AND source=? ORDER BY created", (session,))]
+
+
+def identifiers(texts: list[str], limit: int = 40) -> list[str]:
+    """Paths, file names, ids, hashes and code spans named in these texts, most recent first, deduplicated."""
+    seen, out = set(), []
+    for text in reversed(texts):
+        for m in _IDENT.finditer(text):
+            tok = next(g for g in m.groups() if g)
+            if tok not in seen:
+                seen.add(tok)
+                out.append(tok)
+    return out[:limit]
