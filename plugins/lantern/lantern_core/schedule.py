@@ -7,15 +7,17 @@ import sys
 from pathlib import Path
 
 
-def _launcher(entry: Path, job: str) -> list[str]:
-    return ["uv", "run", "--no-project", "--quiet", str(entry), "job", job]
+def _launcher(entry: Path, job: str, data: Path | None = None) -> list[str]:
+    # The job runs outside Claude Code, so it is told which data folder the sessions use.
+    return ["uv", "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
 
 
-def plan(job: str, hour: int, entry: Path, platform: str = sys.platform, home: Path = Path.home()) -> dict:
+def plan(job: str, hour: int, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
+         data: Path | None = None) -> dict:
     """Daily job at `hour`:00 local time. Returns {"files": {path: text}, "commands": [[argv], ...]}."""
     if not 0 <= hour <= 23:
         raise ValueError(f"hour must be 0-23, got {hour}")
-    argv = _launcher(entry, job)
+    argv = _launcher(entry, job, data)
     name = f"lantern-{job}"
     if platform == "win32":
         return {"files": {}, "commands": [[
