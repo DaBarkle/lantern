@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -8,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lantern_core import doctor, hooks, memory, shield, stage  # noqa: E402
+from lantern_core import approvals, doctor, hooks, memory, shield, stage  # noqa: E402
 
 HOUR = 3600
 FAKE_GH = "ghp_" + "A1b2" * 9  # built at runtime: no literal secret in the repo
@@ -94,3 +95,67 @@ class DoctorTest(unittest.TestCase):
                 doctor.run_all()
             self.assertEqual(stage.top(db), [])  # fixed problem clears its own alert
             db.close()
+
+
+class ApprovalsTest(unittest.TestCase):
+    """Against a fake ntfy server: the phone's tap is a POST to the reply topic."""
+
+    def setUp(self):
+        import http.server
+        import threading
+        posts, replies = [], []
+
+        class Fake(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                posts.append(body)
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write("".join(json.dumps({"event": "message", "message": m}) + "\n" for m in replies).encode())
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), Fake)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.posts, self.replies = posts, replies
+        self.cfg = {"server": f"http://127.0.0.1:{self.srv.server_port}", "topic": "t"}
+
+    def tearDown(self):
+        self.srv.shutdown()
+
+    def tap(self, which):
+        # wait for the question, then answer it the way the ntfy action button would
+        for _ in range(100):
+            if self.posts:
+                action = next(a for a in self.posts[0]["actions"] if a["label"] == which)
+                self.replies.extend(["approve deadbeef", action["body"]])  # an old tap first: must be ignored
+                return
+            time.sleep(0.02)
+
+    def run_ask(self, which, timeout=5):
+        import threading
+        threading.Thread(target=self.tap, args=(which,), daemon=True).start()
+        with mock.patch.object(approvals, "POLL_SECONDS", 0.05):
+            return approvals.ask("Restart Plex?", timeout=timeout, cfg=self.cfg)
+
+    def test_approve_and_deny(self):
+        self.assertEqual(self.run_ask("Approve"), approvals.APPROVED)
+        self.posts.clear()
+        self.replies.clear()
+        self.assertEqual(self.run_ask("Deny"), approvals.DENIED)
+
+    def test_old_taps_and_silence_time_out(self):
+        self.replies.append("approve deadbeef")
+        with mock.patch.object(approvals, "POLL_SECONDS", 0.05):
+            self.assertEqual(approvals.ask("x", timeout=0.3, cfg=self.cfg), approvals.TIMED_OUT)
+
+    def test_topic_is_private_and_stable(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            a, b = approvals.config(), approvals.config()
+            self.assertEqual(a, b)
+            self.assertGreater(len(a["topic"]), 25)
