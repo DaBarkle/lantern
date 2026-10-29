@@ -1,0 +1,30 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Unit tests
+        working-directory: plugins/lantern
+        run: uv run --no-project python -m unittest discover -s tests -v
+      - name: Hook smoke test
+        working-directory: plugins/lantern
+        shell: bash
+        run: |
+          out=$(echo '{"source":"startup"}' | CLAUDE_PLUGIN_DATA="$RUNNER_TEMP/lantern" uv run --no-project --quiet lantern.py hook session-start)
+          echo "$out" | grep -q '"hookEventName": "SessionStart"'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate plugin and marketplace
+        shell: bash
+        run: |
+          npx -y @anthropic-ai/claude-code plugin validate --strict plugins/lantern
+          npx -y @anthropic-ai/claude-code plugin validate --strict .

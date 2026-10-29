@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--quiet", "${CLAUDE_PLUGIN_ROOT}/lantern.py", "hook", "session-start"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

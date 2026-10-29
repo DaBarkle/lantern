@@ -1,0 +1,16 @@
+{
+  "name": "lantern",
+  "owner": {
+    "name": "DaBarkle"
+  },
+  "metadata": {
+    "description": "Lantern: a personal agent harness for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "lantern",
+      "source": "./plugins/lantern",
+      "description": "Lantern core: memory, recall, stage, shield, doctor and discovery."
+    }
+  ]
+}
