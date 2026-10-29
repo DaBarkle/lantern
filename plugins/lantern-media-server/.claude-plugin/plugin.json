@@ -1,0 +1,8 @@
+{
+  "name": "lantern-media-server",
+  "version": "0.1.0",
+  "description": "Lantern pack: Plex or Jellyfin plus the *arr apps, diagnosed read-first.",
+  "author": { "name": "DaBarkle" },
+  "license": "Apache-2.0",
+  "keywords": ["lantern", "media-server"]
+}

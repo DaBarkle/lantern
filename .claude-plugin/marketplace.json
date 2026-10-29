@@ -11,6 +11,31 @@
       "name": "lantern",
       "source": "./plugins/lantern",
       "description": "Lantern core: memory, recall, stage, shield, doctor and discovery."
+    },
+    {
+      "name": "lantern-docker",
+      "source": "./plugins/lantern-docker",
+      "description": "Check and manage Docker or Podman containers safely."
+    },
+    {
+      "name": "lantern-home-assistant",
+      "source": "./plugins/lantern-home-assistant",
+      "description": "Home Assistant through its API, actions only with your OK."
+    },
+    {
+      "name": "lantern-media-server",
+      "source": "./plugins/lantern-media-server",
+      "description": "Plex or Jellyfin plus the *arr apps, diagnosed read-first."
+    },
+    {
+      "name": "lantern-unifi",
+      "source": "./plugins/lantern-unifi",
+      "description": "Read UniFi network state; changes are staged for your approval."
+    },
+    {
+      "name": "lantern-tailscale",
+      "source": "./plugins/lantern-tailscale",
+      "description": "Read-only Tailscale diagnosis. Never changes the tailnet."
     }
   ]
 }

@@ -20,11 +20,13 @@ jobs:
         run: |
           out=$(echo '{"source":"startup"}' | CLAUDE_PLUGIN_DATA="$RUNNER_TEMP/lantern" uv run --no-project --quiet lantern.py hook session-start)
           echo "$out" | grep -q '"hookEventName": "SessionStart"'
+      - name: Tailscale pack guard self-test
+        run: uv run --no-project python plugins/lantern-tailscale/guard.py --self-test
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Validate plugin and marketplace
         shell: bash
         run: |
-          npx -y @anthropic-ai/claude-code plugin validate --strict plugins/lantern
+          for p in plugins/*/; do npx -y @anthropic-ai/claude-code plugin validate --strict "$p"; done
           npx -y @anthropic-ai/claude-code plugin validate --strict .

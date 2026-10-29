@@ -1,0 +1,8 @@
+{
+  "name": "lantern-home-assistant",
+  "version": "0.1.0",
+  "description": "Lantern pack: check Home Assistant and work with it through its API safely.",
+  "author": { "name": "DaBarkle" },
+  "license": "Apache-2.0",
+  "keywords": ["lantern", "home-assistant"]
+}
