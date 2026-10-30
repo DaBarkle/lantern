@@ -374,7 +374,7 @@ class SurveyTest(unittest.TestCase):
                 self.assertFalse(survey.real_start())  # already running
             self.assertEqual(spawned[0][-3:-2], ["survey"])
             events = [json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x/README.md"}}]}}),
-                      json.dumps({"type": "result", "result": "# What this machine is for\nA lab.\n# Profile\nA builder (inferred)."})]
+                      json.dumps({"type": "result", "result": "# What this machine is for\nA lab.\n# Worth knowing\n1. The restic passphrase sits next to the repo it unlocks on Nyx.\n- Nothing is backed up off this machine at all.\n# Profile\nA builder (inferred)."})]
             fake = mock.Mock(stdout=iter(l + "\n" for l in events), poll=lambda: 0, wait=lambda timeout=None: 0, kill=lambda: None)
             with mock.patch.object(survey.subprocess, "Popen", return_value=fake):
                 survey.run()
@@ -383,6 +383,7 @@ class SurveyTest(unittest.TestCase):
             db = memory.connect()
             self.assertIn("A builder", memory.profile(db, 1000))
             self.assertIn("finished its survey", stage.top(db)[0]["message"])
+            self.assertIn("Survey risks still open (2): The restic passphrase", insights.open_block(db))
             db.close()
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 r = hooks.user_prompt_submit({"prompt": "anything new?", "session_id": "s9"})

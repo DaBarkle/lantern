@@ -112,6 +112,12 @@ def run(data: Path | None = None) -> str:
             prof = text.split("# Profile", 1)[-1].strip() if "# Profile" in text else ""
             if prof:
                 memory.add(db, "profile", "survey", prof[:1200])
+            # Each "worth knowing" item becomes a standing Stage entry, so the survey's risks stay in view across sessions
+            # instead of living only in a brief; they clear when the user says so or after two weeks.
+            section = text.split("# Worth knowing", 1)[-1].split("\n# ", 1)[0] if "# Worth knowing" in text else ""
+            items = [l.strip().lstrip("-*0123456789. ").strip() for l in section.splitlines() if l.strip().startswith(("-", "*")) or l.strip()[:2].rstrip(".").isdigit()]
+            for n, item in enumerate([i for i in items if len(i) > 20][:6], 1):
+                stage.publish(db, f"survey/worth/{n}", "survey", item[:300], score=4, days=14)
             stage.publish(db, "survey/done", "survey", "Lantern finished its survey of this machine: its understanding, what is "
                           "worth knowing and what it proposes to take on are in the session context now.", score=7, days=2)
         else:

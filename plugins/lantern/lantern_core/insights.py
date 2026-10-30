@@ -270,7 +270,11 @@ def open_block(db) -> str:
     for e in entries:
         groups.setdefault(e["key"].split("/")[1], []).append(e["message"].split(" (")[0].split(" has ")[0].split(" is ")[0][:60])
     parts = [f"{len(v)} {k.replace('repo-', 'project ')}: " + ", ".join(v[:12]) for k, v in sorted(groups.items())]
-    return f"Open findings ({len(entries)}; state counts only from this line): " + " | ".join(parts) + "."
+    worth = [e["message"][:80] for e in stage.top(db, k=200) if e["key"].startswith("survey/worth/")]
+    line = f"Open findings ({len(entries)}; state counts only from this line): " + " | ".join(parts) + "."
+    if worth:
+        line += f" Survey risks still open ({len(worth)}): " + " | ".join(worth) + "."
+    return line
 
 
 def watch_summary(db) -> str:
