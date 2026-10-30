@@ -154,6 +154,31 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(memory.previous_session(db, "d3", "/proj")["goal"], "what changed")  # day 3 resumes from day 2, not an older session
         db.close()
 
+    def test_what_changed_points_at_the_computed_block(self):
+        with mock.patch.object(hooks.semantic, "search", return_value=None):
+            ctx = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("SINCE LAST SESSION block", ctx)
+            self.assertIn("File timestamps in this folder are not the answer", ctx)
+            r = hooks.user_prompt_submit({"prompt": "add a nightly timer", "session_id": "s1"})
+        self.assertNotIn("File timestamps", (r or {}).get("hookSpecificOutput", {}).get("additionalContext", ""))
+
+    def test_a_restart_of_something_a_rule_names_asks_first(self):
+        db = memory.connect()
+        memory.add(db, "rule", "said:s0", "from now on, never restart Plex without asking me first, it breaks my parents' stream")
+        db.close()
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("plex looks stuck, restart it now"), assistant("On it.")])
+        call = lambda cmd: hooks.rule_guard({"tool_name": "Bash", "tool_input": {"command": cmd}, "transcript_path": str(p)})
+        out = call("systemctl --user restart container-plex.service")
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("never restart Plex", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIsNone(call("systemctl --user restart sonarr.service"))  # no rule names it
+        self.assertIsNone(call("systemctl --user status container-plex.service"))  # reading is free
+        write(p, [user("plex looks stuck, restart it now"), assistant('Your rule: "from now on, never restart Plex without asking me first, it breaks my parents\' stream". Nobody is streaming; restarting now as you asked.')])
+        self.assertIsNone(call("systemctl --user restart container-plex.service"))  # quoted this turn: the go-ahead stands
+        self.assertEqual(memory.open_loops("Say which of these duties to take on. The most useful next step is a local backup."),
+                         ["Say which of these duties to take on", "The most useful next step is a local backup"])
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()

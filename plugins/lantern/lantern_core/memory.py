@@ -214,7 +214,8 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
 _SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or version does not end it
 _LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
                    r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
-                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me if|Say the word|If you want me to|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
+                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me (?:if|which|whether)|Say (?:the word|which|yes|go)|If you want me to|"
+                   r"The (?:most useful )?next step|Still (?:waiting|open)|Waiting (?:on|for) you|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
 
 
 _HEDGE = re.compile(r"\b(?:guess\w*|couldn't|could not|can't (?:confirm|verify|tell|check|read)|cannot (?:confirm|verify|tell|check|read)|unverified|"

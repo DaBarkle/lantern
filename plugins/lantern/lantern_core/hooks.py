@@ -307,7 +307,8 @@ def session_start(payload: dict) -> dict | None:
         lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
                   "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
         if previous and previous.get("loops"):
-            lines += ["Left unfinished last session (do each now, ask again once, or drop it with a reason; never say 'open loop' to the user): "
+            lines += ["Left unfinished last session (name each one in this reply: done now, asked again once, or dropped with a reason; "
+                      "never say 'open loop' to the user): "
                       + "; ".join(previous["loops"])]
     return _context("SessionStart", "\n".join(lines))
 
@@ -375,6 +376,10 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
 
 
 _REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
+
+
+_WHAT_CHANGED = re.compile(r"what(?:'s| is| has)? (?:changed|new|happened)|since (?:yesterday|last time|last session|I was (?:away|gone))|"
+                           r"anything (?:new|I should know|to report)|how (?:is|are) (?:things|everything|the machine|my (?:computer|machine))", re.I)
 
 
 def user_prompt_submit(payload: dict) -> dict | None:
@@ -477,6 +482,11 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines.append("Also possibly relevant:")
             lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
                       for h in titles]
+    if _WHAT_CHANGED.search(prompt):
+        lines += ["This asks what changed: the answer is the SINCE LAST SESSION block in your session context (its counts, the new, "
+                  "changed, back-again and resolved items with their reasons, what was found on this machine, where the last session "
+                  "left off and what was left unfinished) plus the watches line. File timestamps in this folder are not the answer; "
+                  "use them only to add detail to an item already in that block. Name each unfinished item: done, asked again, or dropped with a reason."]
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
         lines += ["A rule reaches exactly what it names: one about X says nothing about Y, so if this request is outside the "
@@ -622,6 +632,37 @@ def subagent_stop(payload: dict) -> dict | None:
     return None
 
 
+_DISRUPT = re.compile(r"\b(?:systemctl(?:\s+--user)?\s+(?:restart|stop|kill|disable)|(?:podman|docker)\s+(?:restart|stop|kill|rm)|flatpak\s+kill)\s+(?:-\S+\s+)*([^\s;&|]+)")
+
+
+def rule_guard(payload: dict) -> dict | None:
+    """A restart, stop or kill of something a stored rule names asks the user first, in code, unless this turn already
+    quoted the rule to them: "restart it now" is a go-ahead only once the rule and its reason have been said."""
+    if payload.get("tool_name") != "Bash":
+        return None
+    m = _DISRUPT.search((payload.get("tool_input") or {}).get("command", ""))
+    if not m:
+        return None
+    stem = re.sub(r"\.(?:service|timer|container|socket)$", "", Path(m.group(1).strip("'\"")).name).lower()
+    words = {w for w in re.split(r"[^a-z0-9]+", stem) if len(w) >= 3} - {"container", "service", "user", "app"}
+    if not words:
+        return None
+    db = memory.connect()
+    try:
+        rules = memory.rules(db, 20000)
+    finally:
+        db.close()
+    hit = next((r for r in rules if any(w in r.lower() for w in words)), None)
+    if not hit:
+        return None
+    said = transcript.last_turn(payload.get("transcript_path", ""))["reply"].lower()
+    if "your rule" in said or hit[:40].lower() in said:
+        return None  # quoted in this turn; the user's go-ahead stands
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+            "permissionDecisionReason": f'Your rule: "{hit}". Quote it to the user with the reason it protects and what you checked, '
+                                        "and run this only on their go-ahead."}}
+
+
 def new_big_files(db, cwd: str, now: float | None = None) -> None:
     """A large file that appeared in this folder in the last two days goes on Stage, so a 600 MB scratch file is noticed
     without the user pointing at it; it comes off again once it is gone."""
@@ -665,7 +706,7 @@ def git_state(db, cwd: str) -> None:
 
 
 HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop, "stop-nudge": stop_nudge,
-            "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or packs.pre_tool_use(p),
+            "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or rule_guard(p) or packs.pre_tool_use(p),
             "signal": statusline.signal}
 
 
