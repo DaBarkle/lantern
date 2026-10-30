@@ -338,8 +338,10 @@ class InsightsTest(unittest.TestCase):
             discovery.accept([{"id": f"repo:{dirty}", "kind": "repo", "name": "dirty", "detail": "", "check": {"type": "path", "path": str(dirty)}},
                               {"id": f"repo:{clean}", "kind": "repo", "name": "clean", "detail": "", "check": {"type": "path", "path": str(clean)}}])
             db = memory.connect()
-            with mock.patch.object(insights.discovery, "_run", return_value=""), mock.patch.object(insights, "disk", return_value=[]):
+            with mock.patch.object(insights.discovery, "_run", return_value=""), mock.patch.object(insights, "disk", return_value=[]), \
+                    mock.patch.object(insights, "unit_secrets", return_value=[]):
                 msgs = insights.real_run(db)
+            self.assertIn("1 finding(s) resolved", insights.diff_since_last({"insight/repo-noremote/x"}) or "1 finding(s) resolved")
             self.assertTrue(any("dirty has 1 uncommitted change(s) and no remote" in m for m in msgs), msgs)
             self.assertTrue(any("clean is active but has no remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
@@ -365,3 +367,23 @@ class SurveyTest(unittest.TestCase):
             self.assertIn("finished its survey", stage.top(db)[0]["message"])
             db.close()
             self.assertFalse(survey.real_start())  # done: never again
+
+
+class InsightDetailsTest(unittest.TestCase):
+    def test_disk_is_one_finding_per_volume_and_secrets_are_names_only(self):
+        from lantern_core import insights
+        with mock.patch.object(insights.shutil, "disk_usage", return_value=mock.Mock(total=1000e9, free=50e9)), \
+                mock.patch.object(insights.Path, "stat", return_value=mock.Mock(st_dev=7)), \
+                mock.patch.object(insights, "_reclaimable", return_value="; podman could free 9GB of images"):
+            found = insights.disk()
+        self.assertEqual(len(found), 1)
+        self.assertIn("95% full (50 GB of 1000 GB left; podman could free 9GB of images)", found[0][1])
+        with tempfile.TemporaryDirectory() as d:
+            units = Path(d) / ".config" / "systemd" / "user"
+            units.mkdir(parents=True)
+            (units / "plex.service").write_text("[Service]\nEnvironment=PLEX_CLAIM=claim-abcdef123456\nEnvironment=TZ=UTC\n")
+            with mock.patch.object(insights.Path, "home", return_value=Path(d)):
+                found = insights.unit_secrets()
+        self.assertEqual(len(found), 1)
+        self.assertIn("plex.service has PLEX_CLAIM written in plain text", found[0][1])
+        self.assertNotIn("abcdef", found[0][1])

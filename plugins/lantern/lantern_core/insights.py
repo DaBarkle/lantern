@@ -1,5 +1,6 @@
 """Things the user may not know about their own machine, worked out from what discovery found. Plain checks, no model:
 each one is a fact with a reason, published to Stage so the first reply (and every later session) can say it."""
+import re
 import shutil
 import subprocess
 import time
@@ -44,16 +45,46 @@ def repos(caps: dict, now: float | None = None) -> list[tuple[str, str, float]]:
     return out
 
 
+def _reclaimable() -> str:
+    """What `podman system df` says could be freed, as one phrase, or ''."""
+    text = discovery._run(["podman", "system", "df", "--format", "{{.Type}} {{.Reclaimable}}"])
+    parts = [l.split(" ", 1) for l in text.splitlines() if " " in l]
+    freeable = [f"{p[1].split('(')[0].strip()} of {p[0].lower()}" for p in parts if p[1].strip() and not p[1].startswith("0B")]
+    return "; podman could free " + ", ".join(freeable) if freeable else ""
+
+
 def disk() -> list[tuple[str, str, float]]:
-    out = []
-    for mount in {str(Path.home()), "/var"}:  # on an immutable OS the root is read-only and always "full"
+    out, seen = [], set()
+    for mount in (str(Path.home()), "/var"):  # on an immutable OS the root is read-only and always "full"
         try:
+            dev = Path(mount).stat().st_dev
             u = shutil.disk_usage(mount)
         except OSError:
             continue
+        if dev in seen:
+            continue  # /home and /var are one volume on Fedora Atomic: one finding, not two
+        seen.add(dev)
         pct = 100 * (u.total - u.free) / u.total if u.total else 0
         if pct >= DISK_PCT:
-            out.append((f"insight/disk/{mount}", f"{mount} is {pct:.0f}% full ({u.free / 1e9:.0f} GB left)", 6))
+            out.append((f"insight/disk/{dev}", f"the volume holding {mount} is {pct:.0f}% full ({u.free / 1e9:.0f} GB of "
+                        f"{u.total / 1e9:.0f} GB left{_reclaimable()})", 6 if pct >= 92 else 4))
+    return out
+
+
+SECRET_NAMES = re.compile(r"^\s*Environment=.*\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CLAIM)[A-Z0-9_]*)=", re.M)
+
+
+def unit_secrets() -> list[tuple[str, str, float]]:
+    """Unit files that carry a credential value in plain text (names only; values are never read into memory)."""
+    out = []
+    for unit in sorted((Path.home() / ".config" / "systemd" / "user").glob("*.service"))[:200]:
+        try:
+            names = sorted(set(SECRET_NAMES.findall(unit.read_text(errors="replace"))))
+        except OSError:
+            continue
+        if names:
+            out.append((f"insight/secret-in-unit/{unit.name}", f"{unit.name} has {', '.join(names)} written in plain text in the unit "
+                        "file (a claim token expires in minutes and is harmless; a long-lived token should move to the keychain)", 3))
     return out
 
 
@@ -67,16 +98,35 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
     for line in failed[:5]:
         unit = line.split()[0] if line.split() else ""
         if unit:
-            out.append((f"insight/failed/{unit}", f"{unit} has failed (systemd reports it)", 5))
+            log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "20", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
+            cause = f": last log line: {log[-1][:160]}" if log else ""
+            out.append((f"insight/failed/{unit}", f"{unit} has failed{cause}", 5))
     return out
 
 
 def run(db, now: float | None = None) -> list[str]:
     """Publish every insight to Stage (replacing the last run's) and return their messages, highest first."""
     caps = discovery.settings().get("capabilities", {})
-    found = repos(caps, now) + disk() + services(caps)
+    if not caps:
+        return []
+    found = repos(caps, now) + disk() + services(caps) + unit_secrets()
     found.sort(key=lambda f: -f[2])
     for key, msg, score in found:
         stage.publish(db, key, "insight", msg, score=score, days=3, now=now)
     stage.resolve_source(db, "insight", {k for k, _, _ in found})
     return [m for _, m, _ in found]
+
+
+def diff_since_last(found_keys: set[str]) -> str:
+    """One line on how the findings moved since the last session, and remember them for next time."""
+    s = discovery.settings()
+    before = set(s.get("insights", []))
+    s["insights"] = sorted(found_keys)
+    discovery.save_settings(s)
+    if not before and not found_keys:
+        return ""
+    resolved, new = before - found_keys, found_keys - before
+    if not before:
+        return ""
+    return (f"Since the last session: {len(resolved)} finding(s) resolved, {len(new)} new, "
+            f"{len(found_keys & before)} unchanged (all checked just now).")

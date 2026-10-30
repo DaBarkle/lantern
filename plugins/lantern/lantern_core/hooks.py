@@ -60,42 +60,42 @@ def _log(name: str, record: dict) -> None:
 
 
 FIRST_RUN = """This is Lantern's first session on this machine. Before this reply, Lantern looked at the machine (the summary
-above), worked out the findings on its Stage (things the user may not know), and started a background survey that
-reads the machine's own files and will report in a few minutes. Onboarding happens here, visually; the user never runs
-a command and never leaves Claude.
+above), worked out the findings on its Stage, started a read-only background survey (reports in a few minutes), and took
+on three read-only duties by default: it watches for failed services, disk running short, and uncommitted or unpushed
+project work. Onboarding happens here, visually; the user never runs a command and never leaves Claude.
 
-Your first reply, in this order:
-1. Answer their message in a line if it was a request; otherwise a one-line hello.
-2. Who you are: Claude with Lantern, in two sentences (remembers sessions and this machine, brings the right context to
-   each prompt, learns a rule the moment it is stated, checks itself daily, keeps secrets out of the model).
-3. "What I found" as a markdown table: kind, count, examples (from the summary above).
-4. "Things you may not know": the Stage findings above as a short list with the reason each matters. If there are none,
-   say the machine looks tidy.
-5. One question with the AskUserQuestion tool (multi-select, each option with a one-line why):
-   - "Look wider" (read-only: containers, VMs, services, installed apps, SSH hosts, local servers) ->
-     `uv run --no-project --quiet "{entry}" depth 3`, then show the new finds as a table from the command's output;
-   - "Take these on" with the responsibilities the findings suggest (watch the services found daily; flag uncommitted or
-     unpushed work; warn when disk runs short) -> store each accepted one with `"{entry}" remember --rule "<text>"`;
-   - "Approvals on my phone" -> `"{entry}" approve setup`, show the topic as a two-step list, then ask with
-     AskUserQuestion whether to send the test (`"{entry}" approve "Lantern test: tap Approve" --timeout 300`).
-   Secrets are one line in the table, not a choice: raw secrets never reach the model; typing `secret NAME: <value>`
-   in chat stores it in the keychain and stops that message before the model; 1Password items can be linked.
-6. Then two AskUserQuestion questions with options plus their own words: what they mostly use this machine for, and
-   what Lantern must be careful about. Store with `"{entry}" remember --profile "<text>"` / `remember --rule "<text>"`.
-7. Close with "What Lantern now does for you" as a table (memory, context, learning, daily checks, the responsibilities
-   taken on, secrets, approvals) and one concrete thing it can do right now from the findings, offered as a next step.
-When the survey finishes, the Stage will say so: then show its "Worth knowing" and "What Lantern should take on" as
-a table or list, and its service map as the table and indented tree it contains (never mermaid: Claude Code's desktop
-tab shows it as raw text). Report every step from the command's own output; never read Lantern's files
-or database. Never give the user a command to run, never suggest packs, never suggest a new session. After any task,
-end by offering the next useful thing in one line."""
+Your first reply, in this order, short:
+1. Answer their message in a line if it was a request; otherwise one line of hello. One sentence on who you are:
+   Claude with Lantern, which remembers this machine and your sessions and brings what matters into every prompt.
+2. "What I found", one line: the machine and the counts from the summary above (no table of tool names).
+3. "Things you may not know": at most three findings from the Stage, each with its cause (from the finding) and the
+   action you propose, ranked by data loss and live credentials first, overlapping automation next, hygiene last.
+   A finding is already checked; do not offer to look into it, say what it is and what you would do.
+4. "I've started watching" one line: failed services, disk, unpushed work; "say 'stop watching X' to turn one off".
+5. One AskUserQuestion with two questions: (a) confirm the guess of what this machine is for, built from the finds
+   (e.g. "Gaming, a home media stack and building X. Right?") with options plus their own words; (b) guardrails
+   proposed from the finds as multi-select (never restart <services found> without asking; never push <folders that
+   look personal> anywhere; ask before changing the OS; approvals on my phone for anything consequential). Store the
+   answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`; for phone approvals
+   run `"{entry}" approve setup` and show the two steps for the ntfy app.
+6. Offer to go wider in one line (containers, VMs, services, apps, SSH hosts, local servers; read-only):
+   `uv run --no-project --quiet "{entry}" depth 3`, then show the new finds from the command's output as a table.
+No table of what Lantern does; it shows through behaviour. Secrets, if they come up: raw secrets never reach the model;
+`secret NAME: <value>` typed in chat goes to the keychain and the message is stopped before the model.
+When the Stage announces the survey, open your next reply with "While you were working I found more:" and show its
+"Worth knowing" and "What Lantern should take on" as a short list, and its service map as the table and tree it
+contains. Report from the commands' own output; never read Lantern's files or database. Never give the user a command
+to run, never suggest packs, never suggest a new session. After any task, end by offering the next useful thing."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
 `uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
-choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid: it does
-not render in Claude Code's desktop tab).
+choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
-it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status` as a
-small table. After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""
+it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
+Findings on the Stage were checked at this session's start; when you recommend an order of fixes, rank data loss and
+live credentials first, overlapping automation next, hygiene last, and say what each would free or prevent. Known
+benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
+proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
+After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""
 
 
 def session_start(payload: dict) -> dict | None:
@@ -105,17 +105,16 @@ def session_start(payload: dict) -> dict | None:
     if first:
         discovery.auto()  # the first reply should already know this machine: look at the workspace now, within the depth default
         discovery.save_settings({**discovery.settings(), "first_session": payload.get("session_id", "?")})
-        db0 = memory.connect()
-        try:
-            insights.run(db0)  # and already know what is worth telling the user
-        finally:
-            db0.close()
         survey.start()  # the deeper understanding arrives a few minutes in
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
     db = memory.connect()
     try:
+        moved = ""
+        if payload.get("source") not in ("compact", "resume"):
+            insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
+            moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"})
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact", dated=True)
@@ -176,7 +175,9 @@ def session_start(payload: dict) -> dict | None:
     elif tail:
         lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
     if attention:
-        lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]
+        lines += ["", "On Lantern's Stage (open findings, most pressing first, checked at this session's start):", attention]
+    if moved:
+        lines += [moved]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry)]
     return _context("SessionStart", "\n".join(lines))
 
