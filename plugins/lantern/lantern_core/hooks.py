@@ -109,8 +109,8 @@ When the user states a rule or preference ("from now on...", "don't..."), Lanter
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
 Findings on the Stage were checked within the last hour; when you recommend an order of fixes, rank verified data
 loss and verified secret exposure first, services down next, drift and unpinned code after, cosmetic last, and say what
-each would free or prevent; at most three numbered, the rest as "plus N smaller". Never say "I'd check" or
-"unconfirmed" about something you can read now: read it in this turn (read-only) and say what you found; before saying
+each would free or prevent; at most three numbered, the rest as "plus N smaller". Never say "I'd check", "I didn't check" or
+"unconfirmed" about something you can read now: read it in this turn (read-only), before the reply ends, and say what you found; before saying
 you cannot verify something, look for file evidence (state files, logs, last-run stamps, artifact dates) and cite it.
 Before proposing any fix, check it against the user's rules, the pending defaults above and the other open findings:
 a fix that moves personal or finance data to another machine, or that worsens another finding, is ordered after the
@@ -127,7 +127,7 @@ second agent ("Lantern has saved" -> "I've saved"). Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
-ask only before a write to the system. An open loop from an earlier session is never re-offered in the same words: do
+ask only before a write to the system. Something left unfinished in an earlier session is never re-offered in the same words: do
 its read-only or text part now (draft the diff, read the file, state the cause), re-ask it once, or retire it with a
 reason. When a standing rule touches the request, begin with `Your rule: "<exact text>"` and apply it, including the
 reason it was given (check what the reason protects before acting). Read-only watching is on by default: announce it, offer "say stop watching X",
@@ -206,6 +206,7 @@ def session_start(payload: dict) -> dict | None:
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
         git_state(db, cwd)
+        new_big_files(db, cwd)
         attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
@@ -264,9 +265,9 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", f"Where the user's last session {where} left off ({time.strftime('%Y-%m-%d', time.localtime(previous['updated']))}):"]
         lines += memory.ledger_lines(previous)
         if tail:
-            lines += [f"- Last exchange: {tail[-1]['text'][:600]}"]
+            lines += [f"- Last exchange: {tail[-1]['text'][:1500]}"]  # long enough to keep a hedge ("it's a guess, because...")
     elif tail:
-        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
+        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:1500]}" for p in tail]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour; a finding's text is its "
                   "evidence, cite it rather than saying you have not read the log):", attention]
@@ -296,11 +297,12 @@ def session_start(payload: dict) -> dict | None:
     if tail_block and not first:
         stored = memory_rules_count
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
-                  "these lines, using their counts and reasons word for word, then answer):"] + tail_block
+                  "these lines, using their counts and reasons word for word; never split a count into parts of your own; name every "
+                  "item in a 'Found on this machine' line; then answer):"] + tail_block
         lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
                   "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
         if previous and previous.get("loops"):
-            lines += ["Open loops from the last session, each to be done now, re-asked once, or retired with a reason: "
+            lines += ["Left unfinished last session (do each now, ask again once, or drop it with a reason; never say 'open loop' to the user): "
                       + "; ".join(previous["loops"])]
     return _context("SessionStart", "\n".join(lines))
 
@@ -368,11 +370,26 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
 _REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
 
 
+_PLAIN_WORDS = re.compile(r"\b(?:the \w+ thing|keep it simple|plain (?:words|english)|not (?:very )?technical|non-technical|what does that mean|"
+                          r"in simple terms|explain (?:it )?like|I'm not a (?:techie|developer|programmer|computer person)|just fix it)\b", re.I)
+_EXPERT_WORDS = re.compile(r"(?:^|\s)(?:~/|/etc/|/var/|systemctl|journalctl|podman|docker|git (?:status|log|diff|rebase)|\S+\.(?:service|timer)\b)|`[^`]{3,}`")
+
+
+def reader_level(prompt: str) -> None:
+    """The user's own words outrank what the machine suggests: "the plex thing" is a non-technical reader however many
+    services run here; a pasted unit name or path is an expert."""
+    if _PLAIN_WORDS.search(prompt):
+        discovery.save_settings({**discovery.settings(), "expertise": "general"})
+    elif _EXPERT_WORDS.search(prompt) and discovery.settings().get("expertise") != "general":
+        discovery.save_settings({**discovery.settings(), "expertise": "expert"})
+
+
 def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
     capture_previous(payload)
+    reader_level(prompt)
     answered = setup_answer(prompt)
     name, stored = shield.paste(prompt)
     if name:  # a secret handed over in chat: this message never reaches the model, stored or not
@@ -562,20 +579,33 @@ def stop(payload: dict) -> dict | None:
 
 _UNCHECKED = re.compile(r"\bI (?:didn't|did not|couldn't|could not|haven't|have not|was unable to|wasn't able to|have no way to) "
                         r"(?:check|verify|confirm|look at|look into|read|inspect|see|test)\b[^.\n]{0,160}", re.I)
+_HANDS_OFF = re.compile(r"I don't know the state of your (?:machine|computer|system)|run it yourself|so you can (?:approve|run) it"
+                        r"|here is what it would have run|what I would have run|I couldn't check\b", re.I)
+SNAPSHOT_FRESH_S = 2 * 3600
 
 
 def stop_nudge(payload: dict) -> dict | None:
     """A reply that admits not checking something is sent back once: if a read-only command on this machine can answer
-    it, the model runs it and replaces the admission with the result. Runs synchronously, so it stays tiny."""
+    it, the model runs it and adds the result. A reply that sends the user off to run things themselves while Lantern's
+    own watch snapshot is fresh is sent back to that snapshot. Runs synchronously, so it stays tiny."""
     if payload.get("stop_hook_active"):
         return None  # already nudged this turn
     turn = transcript.last_turn(payload.get("transcript_path", ""))
+    if _is_system(turn["user"]):
+        return None
+    at = discovery.settings().get("insights_at", 0)
+    if _HANDS_OFF.search(turn["reply"]) and time.time() - at < SNAPSHOT_FRESH_S:
+        return {"decision": "block", "reason": f"Lantern's own watches ran at {time.strftime('%H:%M', time.localtime(at))}, within the last "
+                "two hours, and their findings are in your context (the Stage, the watches line, the since-last block). Add a short "
+                "follow-up that answers from them in plain words: what is failing, what is fine, what changed. No commands for the "
+                "user to run, no 'I couldn't check', no 'I don't know the state'."}
     gaps = _UNCHECKED.findall(turn["reply"])
-    if not gaps or _is_system(turn["user"]):
+    if not gaps:
         return None
     return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
-            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and state the result in place of the "
-            "admission. If nothing here can answer it, keep the sentence and add in one clause what would."}
+            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
+            "sentences that simply states what you found, with no 'I checked', no 'Correction' and no reference to the earlier "
+            "sentence. If nothing here can answer it, add one clause on what would."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
@@ -591,6 +621,27 @@ def subagent_stop(payload: dict) -> dict | None:
     finally:
         db.close()
     return None
+
+
+def new_big_files(db, cwd: str, now: float | None = None) -> None:
+    """A large file that appeared in this folder in the last two days goes on Stage, so a 600 MB scratch file is noticed
+    without the user pointing at it; it comes off again once it is gone."""
+    if not cwd or not Path(cwd).is_dir():
+        return
+    now = now or time.time()
+    out = discovery._run(["find", cwd, "-xdev", "-maxdepth", "2", "-type", "f", "-size", "+100M", "-mtime", "-2", "-not", "-path", "*/.git/*", "-printf", "%s %p\n"])
+    seen = set()
+    for line in out.splitlines()[:5]:
+        size, _, path = line.partition(" ")
+        if not size.isdigit():
+            continue
+        key = f"bigfile/{path}"
+        seen.add(key)
+        stage.publish(db, key, "watch", f"a new large file appeared: {path.replace(str(Path.home()), '~')} ({int(size) / 1e9:.1f} GB, written in the last two days); "
+                      "say what it is before anyone deletes it", score=3, days=3, now=now)
+    for e in stage.top(db, k=200, now=now):
+        if e["key"].startswith("bigfile/") and e["key"] not in seen and e["key"][8:].startswith(cwd):
+            stage.resolve(db, e["key"])
 
 
 def git_state(db, cwd: str) -> None:

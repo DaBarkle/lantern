@@ -211,9 +211,9 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
 
 
 _SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or version does not end it
-_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))(?:((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
+_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
                    r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
-                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Say the word)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
+                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me if|Say the word|If you want me to|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
 
 
 def open_loops(reply: str, limit: int = 8) -> list[str]:
@@ -222,14 +222,20 @@ def open_loops(reply: str, limit: int = 8) -> list[str]:
     return [(m.group(1) or m.group(2)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
 
 
+_GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before "
+                     "after right again since while where other first might maybe being doing going would wants want needs need".split())
+
+
+def _content(text: str) -> set[str]:
+    """The words a loop is really about: identifiers (paths, units, ports) and longer words that are not filler."""
+    return {w for w in terms(text) if any(c in w for c in "./-_0123456789") or (len(w) >= 5 and w not in _GENERIC)}
+
+
 def addresses(reply: str, loop: str) -> bool:
-    """A reply addresses a loop when it reuses the loop's distinctive words: the thing was done, re-asked or retired."""
-    have = set(terms(reply))
-    distinctive = {w for w in terms(loop) if len(w) >= 6 or any(c in w for c in "./-0123456789")}  # a path, unit, name or long word
-    if distinctive:
-        return bool(distinctive & have)
-    plain = {w for w in terms(loop) if len(w) >= 4}
-    return bool(plain) and len(plain & have) >= min(2, len(plain))  # shortcut: no stemming, "enable" and "enabled" differ; stem if loops linger
+    """A reply addresses a loop when it reuses most of what the loop is about: the thing was done, re-asked or retired.
+    One shared word ("firewall", "6006") is a mention, not a closure."""
+    want = _content(loop)
+    return len(want) >= 2 and len(want & _content(reply)) >= min(3, len(want))  # a one-word loop is retired by the cap, not by a mention
 
 
 def previous_session(db: sqlite3.Connection, session: str, cwd: str, now: float | None = None) -> dict | None:
@@ -286,7 +292,8 @@ def ledger_lines(d: dict) -> list[str]:
     if d.get("reply"):
         out.append(f"- Last reply ended: {d['reply']}")
     if d.get("loops"):
-        out.append("- Open loops from that session (close each or say why it is still open; never repeat one unchanged): " + "; ".join(d["loops"]))
+        out.append("- Left unfinished in that session (do each now, ask again once, or drop it with a reason; never repeat one unchanged "
+                   "and never call it an 'open loop' to the user): " + "; ".join(d["loops"]))
     if d["files"]:
         out.append("- Files edited: " + ", ".join(d["files"]))
     if d["commands"]:

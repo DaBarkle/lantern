@@ -108,6 +108,10 @@ def allowed(command: str) -> bool:
         toks = [re.sub(r"\$\{?(\w+)\}?", lambda m: names.get(m.group(1), m.group(0)), t) for t in toks]
         if any(t in (">", ">>", "&>", ">&") for t in toks):
             return False
+        while toks and toks[0] in ("do", "then", "else", "done", "fi"):  # a loop or if around read-only commands is still read-only
+            toks = toks[1:]
+        if not toks or (toks[0] == "for" and toks[2:3] == ["in"]) or (toks[0] == "if" and _ok(toks[1:])):
+            continue
         if len(toks) == 1 and (m := re.fullmatch(r"([A-Za-z_]\w*)=(.*)", toks[0], re.S)):
             names[m.group(1)] = m.group(2)  # NAME=value on its own, used as "$NAME" later
             continue
@@ -247,6 +251,8 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b." && \\\n"$L" remember --rule "c"')  # line continuation
     assert allowed("curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -s -o /tmp/x http://localhost:1/")
     assert allowed("systemctl --user --failed --no-pager 2>&1 | tail") and allowed("uptime -s; last -x -n 6 | head") and allowed("od -A d -N 32 f; cmp f /dev/zero")
+    assert allowed('for u in a.service b.service; do echo "=== $u"; systemctl status $u --no-pager 2>&1 | sed -n "3,8p"; journalctl -u $u -n 15 --no-pager | tail -15; done')
+    assert not allowed("for u in a b; do systemctl restart $u; done") and allowed("if systemctl --user is-active plex.service; then echo up; else echo down; fi")
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
     assert answer({"question": "Is this right?", "options": [{"label": "Change it"}, {"label": "Yes, that's right"}]}) == "Yes, that's right"

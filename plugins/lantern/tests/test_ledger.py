@@ -99,6 +99,28 @@ class LedgerTest(unittest.TestCase):
         self.assertFalse(any("runs nightly" in f for f in facts))
         self.assertEqual(memory.corrections("All good. I was wrong earlier: Plex runs as container-plex.service, not plex.service."), ["Plex runs as container-plex.service, not plex.service"])
 
+    def test_hands_off_reply_is_sent_back_to_the_snapshot(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is everything ok with my computer?"), assistant("I couldn't check. Here is what it would have run, so you can approve it or run it yourself: systemctl --failed")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 600}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("within the last two hours", out["reason"])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertNotIn("within the last two hours", out["reason"])  # no fresh snapshot to point at; only the plain "couldn't check" nudge remains
+
+    def test_reader_level_follows_the_users_words(self):
+        with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text("{}")
+            hooks.reader_level("is the plex thing ok? keep it simple")
+            self.assertEqual(hooks.discovery.expertise(), "general")
+            hooks.reader_level("check ~/.config/systemd/user/plex.service")
+            self.assertEqual(hooks.discovery.expertise(), "general")  # a path once does not undo "keep it simple"
+            Path(self.tmp.name, "settings.json").write_text("{}")
+            hooks.reader_level("journalctl --user -u plex.service -n 20 please")
+            self.assertEqual(hooks.discovery.expertise(), "expert")
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
@@ -416,6 +438,14 @@ class InsightsTest(unittest.TestCase):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/backup/x.service"})
             self.assertIn("0 findings resolved, 0 new, 1 changed, 1 unchanged", line)  # same subject, new kind: changed, not resolved plus new
             self.assertIn("Changed: x.service: now", line)
+            with mock.patch.object(insights.discovery, "_run", return_value=""):
+                insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
+            with mock.patch.object(insights.discovery, "_run", side_effect=lambda cmd: "failed" if "is-failed" in cmd else ""):
+                line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/y.service"})  # cache says x.service is gone
+            self.assertIn("0 findings resolved, 1 new, 1 back again, 1 unchanged", line)  # but it is failed right now: back, not resolved
+            self.assertIn("Back again", line)
+            self.assertNotIn("checked just now", line)
+            self.assertIn("insight/failed/x.service", insights.discovery.settings()["insights"])  # remembered, so tomorrow it is not "new"
             self.assertTrue(any("dirty (" in m and "has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
             self.assertTrue(any("clean (" in m and "is active but has no git remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
@@ -522,11 +552,13 @@ class HeadlessCaptureTest(unittest.TestCase):
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 hooks.user_prompt_submit({"prompt": "go", "session_id": "s1", "transcript_path": str(p), "cwd": d})
             self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # accumulated
-            # the next session inherits the open loops and closes the one its reply addresses
+            # the next session inherits the unfinished items and closes the one its reply addresses
             write(p, [user("read the journal"), assistant("The plex journal shows a bind failure on port 32400.")])
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 hooks.user_prompt_submit({"prompt": "ok", "session_id": "s2", "transcript_path": str(p), "cwd": d})
-            self.assertEqual(memory.ledger_get(db, "s2")["loops"], ["Next, I can read it"])
+            self.assertEqual(memory.ledger_get(db, "s2")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # one shared word is a mention, not a closure
+            self.assertTrue(memory.addresses("I read the plex journal: a bind failure on port 32400, container-plex holds it.", "I didn't check the plex journal for the bind failure on 32400"))
+            self.assertFalse(memory.addresses("The fix is a localhost bind or a firewall rule on 6006.", "I didn't check whether a firewall already blocks port 6006 from the LAN"))
             db.close()
 
 

@@ -112,22 +112,25 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
     for cid, c in caps.items():
         if c.get("check") and discovery.healthy(c["check"]) is False:
             out.append((f"insight/down/{cid}", f"{c['name']} is not running", 5))
-    failed = discovery._run(["systemctl", "--user", "--failed", "--no-legend", "--plain"]).splitlines()
-    for line in failed[:5]:
-        unit = line.split()[0] if line.split() else ""
-        if unit:
-            log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
+    for scope in (["--user"], []):  # the user's units and the system's (an updater or logrotate failing matters too)
+        failed = discovery._run(["systemctl", *scope, "--failed", "--no-legend", "--plain"]).splitlines()
+        for line in failed[:5]:
+            unit = line.split()[0] if line.split() else ""
+            if not unit:
+                continue
+            log = [l for l in discovery._run(["journalctl", *scope, "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
             boiler = ("Started ", "Starting ", "Stopped ", "Stopping ", "Consumed ", "Scheduled restart", "Failed with result", "Main process exited")
             telling = [l for l in log if not l.startswith(boiler) and not l.startswith(unit)][-3:]
             exits = [l for l in log if "code=" in l or "status=" in l]
             cause = (f"; journal, already read by Lantern: " + " | ".join(t[:120] for t in telling) if telling else "") + (f"; {exits[-1][:120]}" if exits else "")
             if not telling and not exits:
                 cause = "; the journal has no lines for it (the unit may have been created transiently or logs are rotated)"
-            show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
+            show = dict(l.split("=", 1) for l in discovery._run(["systemctl", *scope, "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
             when = show.get("InactiveEnterTimestamp", "")
             detail = f" (result {show.get('Result', '?')}, exit status {show.get('ExecMainStatus', '?')}, at {when})" if show else ""
             note = "; exit 137 at a logout or shutdown means systemd stopped it, not a crash" if show.get("ExecMainStatus") == "137" else ""
-            out.append((f"insight/failed/{unit}", f"{unit} has failed{cause}{detail}{note}", 5))
+            kind = "failed" if scope else "failed-system"
+            out.append((f"insight/{kind}/{unit}", f"{unit}{'' if scope else ' (a system unit)'} has failed{cause}{detail}{note}", 5 if scope else 4))
     return out
 
 
@@ -164,14 +167,25 @@ def _why_resolved(key: str) -> str:
         return (f"{Path(rest).name}: now {'clean' if not dirty else f'{dirty} uncommitted'} (last commit {head or 'none'}), "
                 f"{'has a remote' if remote else 'still no remote, so still unbacked unless a backup job covers it'}"
                 + (", nothing unpushed" if status and "ahead" not in status[0] else ""))
-    if kind == "failed":
-        state = discovery._run(["systemctl", "--user", "is-active", rest]).strip() or "unknown"
+    if kind in ("failed", "failed-system"):
+        state = discovery._run(["systemctl", *(["--user"] if kind == "failed" else []), "is-active", rest]).strip() or "unknown"
         return f"{rest}: now {state}" + (" (its failed state was cleared; it is not shown running)" if state == "inactive" else " (running again)" if state == "active" else "")
     if kind == "down":
         return f"{rest.split(':', 1)[-1]}: now responding"
     if kind == "disk":
         return "disk: now below the warning level"
     return key
+
+
+def _present(key: str) -> bool:
+    """Is this finding there right now? Asked of a finding the cache calls resolved, because the watcher may have run
+    minutes ago and the unit may have failed again since (cheap checks only; the rest trust the cache)."""
+    kind, _, rest = key.removeprefix("insight/").partition("/")
+    if kind.startswith("repo"):
+        return key in {k for k, _, _ in repos({f"repo:{rest}": {"name": Path(rest).name}})}
+    if kind in ("failed", "failed-system"):
+        return discovery._run(["systemctl", *(["--user"] if kind == "failed" else []), "is-failed", rest]).strip() == "failed"
+    return False
 
 
 def discovered_since_last(db) -> str:
@@ -208,6 +222,11 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     for k in found_keys:
         cur.setdefault(_subject(k), set()).add(k)
     resolved = sorted(k for subj in old.keys() - cur.keys() for k in old[subj])
+    back = [k for k in resolved if _present(k)]  # the cache says gone, the machine says it is back
+    resolved = [k for k in resolved if k not in back]
+    if back:
+        s["insights"] = sorted(found_keys | set(back))
+        discovery.save_settings(s)
     new = sorted(k for subj in cur.keys() - old.keys() for k in cur[subj])
     changed = sorted(k for subj in old.keys() & cur.keys() if old[subj] != cur[subj] for k in old[subj])
     unchanged = len(old.keys() & cur.keys()) - len(changed)
@@ -215,8 +234,13 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     counts = [f"{plural(len(resolved), 'finding')} resolved", f"{len(new)} new"]
     if changed:
         counts.append(f"{len(changed)} changed")
+    if back:
+        counts.append(f"{len(back)} back again")
     counts.append(f"{unchanged} unchanged")
-    line = "Since the last session: " + ", ".join(counts) + " (all checked just now)."
+    at = s.get("insights_at")
+    line = "Since the last session: " + ", ".join(counts) + (f" (watches last ran at {time.strftime('%H:%M', time.localtime(at))})." if at else ".")
+    if back:
+        line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back[:6]) + "."
     if new:
         line += " New: " + "; ".join(_name(k) for k in new[:6]) + "."
     if changed:
@@ -304,7 +328,7 @@ def watch_summary(db) -> str:
     for e in entries:
         kinds[e["key"].split("/")[1]] = kinds.get(e["key"].split("/")[1], 0) + 1
     parts = [f"{n} {k.replace('repo-', 'project ')}" for k, n in sorted(kinds.items()) if k != "backup-ok"]
-    failed = [e["key"].split("/", 2)[2] for e in entries if e["key"].startswith("insight/failed/")]
+    failed = [e["key"].split("/", 2)[2] for e in entries if e["key"].startswith(("insight/failed/", "insight/failed-system/"))]
     if failed:
         parts.append("failed: " + ", ".join(failed))
     for e in entries:
