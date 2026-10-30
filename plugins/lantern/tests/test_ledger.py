@@ -415,9 +415,11 @@ class SetupAnswerTest(unittest.TestCase):
                 self.assertIsNone(hooks.user_prompt_submit({"prompt": "what is a quadlet?", "session_id": "s1"}))
                 r = hooks.user_prompt_submit({"prompt": "ok", "session_id": "s1"})
             self.assertIn("accepted the setup", r["hookSpecificOutput"]["additionalContext"])
+            self.assertIn(hooks.GUARDRAILS[0], r["hookSpecificOutput"]["additionalContext"])  # the model is told exactly what was stored
             self.assertEqual(discovery.settings()["pending"], [])
             self.assertEqual(discovery.settings()["depth"], 3)
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("Never restart a service or container", ctx)
             self.assertIn("setup questions were answered", ctx)
             self.assertIn("Lantern's watches", ctx)
+            self.assertIn("Now: 20", ctx)

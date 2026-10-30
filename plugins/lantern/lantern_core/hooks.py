@@ -77,9 +77,10 @@ Your first reply, in this order, short:
 4. "I've started watching" one line: failed services, disk, unpushed work; "say 'stop watching X' to turn one off".
 5. One AskUserQuestion with two questions: (a) confirm the guess of what this machine is for, built from the finds
    (e.g. "Gaming, a home media stack and building X. Right?") with options plus their own words; (b) guardrails
-   proposed from the finds as multi-select (never restart <services found> without asking; never push <folders that
-   look personal> anywhere; ask before changing the OS; approvals on my phone, only if no alert channel to the phone was
-   found on this machine). Store the
+   as multi-select, using exactly these texts as options (add one machine-specific option if the finds call for it,
+   e.g. "Ask before deleting podman images"): {guardrails}. Phone approvals only if no alert channel to the phone was
+   found on this machine. Store each chosen option verbatim with `"{entry}" remember --rule "<exact text>"` and quote
+   rules verbatim whenever you apply one; never paraphrase a rule. Store the
    answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`; for phone approvals
    run `"{entry}" approve setup` and show the two steps for the ntfy app.
 6. Offer to go wider in one line (containers, VMs, services, apps, SSH hosts, local servers; read-only):
@@ -115,7 +116,11 @@ for the user to run. Speak in the first person about your own earlier scan ("my 
 earlier found"), never as if another agent did it. Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
-After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""
+If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
+ask only before a write to the system. Sort fixes so that anything another fix depends on comes first. Label evidence:
+"verified" only for what was observed in the artifact itself; "from config" for what is inferred from paths or
+settings. Use the "Now:" line above to compare against scheduled runs and flag a missed one. After any task, end by
+offering the next useful thing in one line, drawn from what Lantern knows."""
 
 
 def session_start(payload: dict) -> dict | None:
@@ -150,6 +155,7 @@ def session_start(payload: dict) -> dict | None:
         tail = memory.last_session(db, session, RESUME_HOURS * 3600)
         learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
         no_rules = not memory.rules(db, 2000)
+        watches = insights.watch_summary(db)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
@@ -217,12 +223,13 @@ def session_start(payload: dict) -> dict | None:
     if not first:
         at = discovery.settings().get("insights_at")
         lines += [f"Lantern's watches (failed services, disk, unpushed work, known services) last ran at "
-                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}; their findings are the Stage above."]
+                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}."]
         if discovery.settings().get("answered_at"):
             lines += ["The setup questions were answered (guardrails and profile above are in force)."]
         elif discovery.settings().get("pending"):
             lines += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
-    lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry)]
+    lines += ["", f"Now: {time.strftime('%Y-%m-%d %H:%M %Z')}."]
+    lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS))]
     return _context("SessionStart", "\n".join(lines))
 
 
@@ -364,9 +371,11 @@ def setup_answer(prompt: str) -> str | None:
     s["answered_at"] = time.time()
     discovery.save_settings(s)
     jobs.start(["discover"], Path(__file__).resolve().parents[1] / "lantern.py")
-    return ("The user accepted the setup as proposed: Lantern recorded the three guardrails as rules, confirmed the machine's "
-            "purpose as the profile, and started the wider look in the background (its finds show at the next session start "
-            "or on Stage). Acknowledge in one line; do not repeat the questions.")
+    return ("The user accepted the setup as proposed. Lantern stored these rules verbatim: " + " | ".join(f'"{g}"' for g in GUARDRAILS)
+            + ". It confirmed the machine's purpose as the profile and started the wider look in the background (its finds show "
+            "at the next session start or on Stage). Acknowledge in one line, naming the rules; do not repeat the questions. "
+            "If the user chose a subset or added one, store exactly those instead with `remember --rule` and drop the others "
+            "with `forget`.")
 
 
 def note_correction(db, session: str, prompt: str) -> int | None:

@@ -31,7 +31,9 @@ these headings and nothing else:
 depends on" for the main services, and an indented text tree of how they connect; no mermaid, it does not render here)
 # Existing monitoring and backups
 (what already watches what and where alerts go: uptime checkers, timers, SIEM, notification services; and what the backup
-jobs cover, from their scripts; a table "what | watched or backed up by | alerts to")
+jobs cover, from their scripts; a table "what | watched or backed up by | alerts to". For every backup target say where it
+physically lives: a copy on a VM or disk of the same machine is not an off-machine copy, and if nothing is off-machine
+that is always the first thing worth knowing. For any host that holds secrets, name the internet-facing services on it.)
 # Worth knowing
 (at most five things the owner may not know, each verified from a file and specific, ranked: data at risk of loss first,
 then secrets with a real exposure path (in a repo, a backup or a sync; say which), then services down, then drift. A

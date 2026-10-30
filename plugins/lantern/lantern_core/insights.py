@@ -165,3 +165,18 @@ def diff_since_last(found_keys: set[str]) -> str:
     if resolved:
         line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
     return line
+
+
+def watch_summary(db) -> str:
+    """What the watches currently see, in one line: counts by kind and the disk level."""
+    entries = [e for e in stage.top(db, k=100) if e["source"] == "insight"]
+    kinds = {}
+    for e in entries:
+        kinds[e["key"].split("/")[1]] = kinds.get(e["key"].split("/")[1], 0) + 1
+    parts = [f"{n} {k.replace('repo-', 'project ')}" for k, n in sorted(kinds.items())]
+    try:
+        u = shutil.disk_usage(str(Path.home()))
+        parts.append(f"home volume {100 * (u.total - u.free) / u.total:.0f}% used, {u.free / 1e9:.0f} GB free")
+    except OSError:
+        pass
+    return "; ".join(parts) if parts else "nothing to report"
