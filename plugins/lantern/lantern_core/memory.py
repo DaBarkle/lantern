@@ -127,7 +127,7 @@ def profile(db: sqlite3.Connection, max_chars: int) -> str:
     return "\n\n".join(out)
 
 
-_STATE = re.compile(r"\b(?:stopped|paused|disabled|down|off|broken|failing|pending|running|up|enabled|on hold|waiting|blocked)\b", re.I)
+_STATE = re.compile(r"\b(?:stopped|paused|disabled|is down|turned off|broken|failing|pending|is running|enabled|on hold|waiting|blocked)\b", re.I)
 STATE_FRESH_DAYS = 14
 INDEX_LINE = 140
 

@@ -44,9 +44,19 @@ def _is_system(text: str) -> bool:
     return text.lstrip().startswith(SYSTEM_EVENTS)
 
 
+LOG_BYTES = 1_000_000  # a log is a window on recent behaviour, not an archive: keep the newest part
+
+
 def _log(name: str, record: dict) -> None:
-    with open(ensure_data_dir() / f"{name}.jsonl", "a", encoding="utf-8") as f:
+    path = ensure_data_dir() / f"{name}.jsonl"
+    with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": time.time(), **record}) + "\n")
+    try:
+        if path.stat().st_size > LOG_BYTES:
+            lines = path.read_bytes()[-LOG_BYTES // 2:].split(b"\n", 1)[-1]
+            path.write_bytes(lines)
+    except OSError:
+        pass
 
 
 def session_start(payload: dict) -> dict | None:

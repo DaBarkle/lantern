@@ -8,8 +8,12 @@ from .paths import ensure_data_dir
 
 
 def _last(name: str) -> dict:
+    """The newest record, reading only the file's tail: the status line is asked for often."""
     try:
-        lines = (ensure_data_dir() / f"{name}.jsonl").read_text().splitlines()
+        with open(ensure_data_dir() / f"{name}.jsonl", "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            lines = [l for l in f.read().decode("utf-8", errors="replace").splitlines() if l.strip()]
         return json.loads(lines[-1]) if lines else {}
     except (OSError, ValueError):
         return {}

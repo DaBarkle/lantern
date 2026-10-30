@@ -307,3 +307,18 @@ class PreviousMessageTest(unittest.TestCase):
                 self.assertEqual(seen, ["t"])
                 hooks.user_prompt_submit({"prompt": "please list every container on nyx with its image, restart policy and the port it publishes", "session_id": "s", "transcript_path": "t"})
                 self.assertEqual(seen, ["t"])  # a full prompt stands on its own
+
+
+class LogRotationTest(unittest.TestCase):
+    def test_logs_keep_only_their_newest_part(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(hooks, "LOG_BYTES", 2000):
+            for i in range(200):
+                hooks._log("recall", {"fired": True, "hits": [i]})
+            path = Path(d) / "recall.jsonl"
+            self.assertLess(path.stat().st_size, 2100)
+            lines = path.read_text().splitlines()
+            self.assertTrue(all(l.startswith("{") for l in lines))  # no half line at the top
+            self.assertEqual(json.loads(lines[-1])["hits"], [199])
+            from lantern_core import status
+            self.assertIn("1 note recalled last turn", status.line())
