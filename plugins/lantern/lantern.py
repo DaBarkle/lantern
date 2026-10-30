@@ -17,7 +17,7 @@ USAGE = """usage: lantern.py hook <name>
        lantern.py doctor | status
        lantern.py stage list | note <message> [--key K] [--score 1-10] [--days N] | resolve <key>
        lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME
-       lantern.py remember <text> | forget <query> | forget --id N | recall <query> | profile
+       lantern.py remember [--profile|--rule|--pattern] <text> | forget <query> | forget --id N | recall <query> | profile
        lantern.py approve setup | "<question>" [--timeout SECONDS]
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
        lantern.py job curate | doctor | discover         (what the nightly schedule runs)
@@ -48,12 +48,13 @@ def memory_cli(argv: list[str]) -> int:
     db = memory.connect()
     try:
         if argv[:1] == ["remember"] and len(argv) >= 2:
-            text = " ".join(argv[1:])
+            kind = {"--profile": "profile", "--rule": "rule", "--pattern": "pattern"}.get(argv[1], "fact")
+            text = " ".join(argv[2:] if kind != "fact" else argv[1:])
             if shield.find(text):
                 print("that looks like a secret; Lantern will not store it (use `lantern secret set`)", file=sys.stderr)
                 return 1
-            memory.add(db, "fact", "manual", text)
-            print("remembered")
+            memory.add(db, kind, "manual", text)
+            print(f"remembered ({kind})")
             return 0
         if argv[:2] == ["forget", "--id"] and len(argv) == 3:
             memory.supersede(db, int(argv[2]))
@@ -66,8 +67,10 @@ def memory_cli(argv: list[str]) -> int:
                 print("\nDrop one with `lantern forget --id N`.")
             return 0
         if argv == ["profile"]:
-            print("Profile:\n" + (memory.profile(db, 6000) or "(nothing yet)"))
-            print("\nRules:\n" + "\n".join(f"#{i} {t}" for i, t in memory.rule_items(db) )[:12000])
+            print("Profile:\n" + (memory.profile(db, 6000) or "(nothing yet: it fills in as you work)"))
+            rules = [(i, t) for i, t in memory.rule_items(db) if db.execute("SELECT kind FROM items WHERE id=?", (i,)).fetchone()[0] == "rule"]
+            print("\nRules and preferences:\n" + ("\n".join(f"#{i} {t}" for i, t in rules)[:12000] or "(none yet: say 'from now on...' and it sticks)"))
+            print("\nThis machine: " + (discovery.summary() or "(not looked at yet)"))
             return 0
     finally:
         db.close()

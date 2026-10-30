@@ -229,11 +229,11 @@ class AutoDiscoveryTest(unittest.TestCase):
             db = memory.connect()
             top = stage.top(db)
             self.assertIn("docker", top[0]["message"])
-            self.assertIn("lantern-docker", top[0]["message"])
             self.assertTrue(memory.search(db, "docker capability"))
             db.close()
             ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("docker", ctx)
+            self.assertIn("1 dev tools (docker)", ctx)  # the machine summary, not 26 index lines
+            self.assertNotIn("On this machine: docker", ctx)
 
 
 class StatusTest(unittest.TestCase):
@@ -260,10 +260,11 @@ class OnboardingTest(unittest.TestCase):
         from lantern_core import discovery
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
             ctx = hooks.session_start({"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("/lantern:setup", ctx)
-            discovery.cli(["depth", "2"])
+            self.assertIn("first session on this machine", ctx)
+            self.assertIn("never runs a command", ctx)
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
-            self.assertNotIn("/lantern:setup", ctx)
+            self.assertNotIn("first session on this machine", ctx)
+            self.assertIn("never ask the user to run /lantern commands", ctx)
 
 
 class ResourceGuardTest(unittest.TestCase):

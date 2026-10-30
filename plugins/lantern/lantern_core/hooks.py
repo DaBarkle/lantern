@@ -59,14 +59,39 @@ def _log(name: str, record: dict) -> None:
         pass
 
 
+FIRST_RUN = """This is Lantern's first session on this machine, and Lantern has already looked at the workspace (above).
+Onboarding happens in this conversation; the user never runs a command. In your first reply: answer their message, then
+introduce yourself in a few plain sentences: you are Claude with Lantern, which remembers their sessions and this
+machine, brings the right context into every prompt, learns a rule the moment they state one, and checks itself daily.
+Say in one or two sentences what was found on the machine (projects, tools, password managers, the machine itself).
+Then propose the setup, as a short numbered list of what you suggest and why, and ask which they want (one question):
+1. a wider look at this machine: containers, services, installed apps, SSH hosts and local servers (read-only;
+   `uv run --no-project --quiet "{entry}" depth 3` runs it at once and you then say what else was found);
+2. how secrets should flow: Lantern never lets a raw secret into a command or a note; if a password manager was found,
+   say Lantern can read from it on demand, otherwise offer `"{entry}" secret set NAME` (OS keychain) for tokens you will
+   need, run as `"{entry}" secret run NAME -- <command>`;
+3. approvals on their phone for anything consequential (`"{entry}" approve setup` prints a topic for the ntfy app).
+Never suggest installing packs or restarting during onboarding: nothing Lantern does needs a new session.
+Do what they choose, step by step, saying what each step did. At the end, ask what they mostly use this machine for
+and what they would like Lantern to be careful about; store the answer with `"{entry}" remember --profile "<text>"`
+and any rule with `"{entry}" remember --rule "<text>"`. Then say Lantern is set and nothing else is needed:
+it learns and checks itself from here on. Never tell the user to run a /lantern command."""
+EVERY_SESSION = """Lantern notes: never ask the user to run /lantern commands; whatever Lantern needs, do it yourself with
+`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). When
+the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge it.
+If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`."""
+
+
 def session_start(payload: dict) -> dict | None:
     d = ensure_data_dir()
-    if payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
-        jobs.start(jobs.due(), Path(__file__).resolve().parents[1] / "lantern.py")
+    entry = Path(__file__).resolve().parents[1] / "lantern.py"
+    first = not discovery.settings_path().exists()
+    if first:
+        discovery.auto()  # the first reply should already know this machine: look at the workspace now, within the depth default
+        discovery.save_settings({**discovery.settings(), "first_session": payload.get("session_id", "?")})
+    elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
+        jobs.start(jobs.due(), entry)
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
-    if not discovery.settings_path().exists():  # first run: the session itself is the onboarding
-        lines += ["This is Lantern's first session on this machine. Answer the user's message first, as normal. Then, at the end "
-                  "of that first reply only, add one line offering the two-minute setup (/lantern:setup)."]
     db = memory.connect()
     try:
         profile = memory.profile(db, PROFILE_CHARS)
@@ -81,6 +106,7 @@ def session_start(payload: dict) -> dict | None:
         if not previous:
             previous = memory.ledger_last(db, session, RESUME_HOURS * 3600)
         tail = memory.last_session(db, session, RESUME_HOURS * 3600)
+        learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
@@ -96,13 +122,15 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
     if patterns:
         lines += ["", "How the user's systems are worked on (patterns learned from past sessions):"] + [f"- {p}" for p in patterns]
+    machine = discovery.summary()
+    if machine:
+        lines += ["", "This machine, as Lantern found it: " + machine + "."]
     if index:
         lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
                   "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]
-    caps = discovery.settings().get("capabilities", {})
-    if caps:
-        lines += ["", "On this machine (accepted by the user in discovery):",
-                  ", ".join(sorted(c["name"] for c in caps.values()))]
+    if learned and not first:
+        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up):"]
+        lines += [f"- {l}" for l in learned]
     if own:
         lines += ["", "This session's working memory (from before the compaction):",
                   f"- Started with: {own[0][:400]}",
@@ -119,6 +147,7 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]
+    lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry)]
     return _context("SessionStart", "\n".join(lines))
 
 
@@ -204,10 +233,10 @@ def user_prompt_submit(payload: dict) -> dict | None:
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
     if noted:
-        lines += ["Lantern stored this message as a standing rule for future sessions (the user can drop it with /lantern:forget)."]
+        lines += ["Lantern stored this message as a standing rule for future sessions; acknowledge it in a few words."]
     reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
     if noted:
-        reply["systemMessage"] = "Lantern noted a standing rule from your message. /lantern:forget removes it."
+        reply["systemMessage"] = "Lantern noted a standing rule from your message."
     return reply or None
 
 

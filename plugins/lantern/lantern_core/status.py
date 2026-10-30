@@ -26,6 +26,7 @@ def line(now: float | None = None) -> str:
         total = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind != 'turn'").fetchone()[0]
         learned = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind IN ('rule','fact','pattern','profile') "
                              "AND source NOT LIKE 'discovery:%' AND created > ?", (now - 86400,)).fetchone()[0]
+        turns = db.execute("SELECT count(*) FROM items WHERE kind='turn' AND created > ?", (now - 86400,)).fetchone()[0]
         found = db.execute("SELECT count(*) FROM items WHERE status='active' AND source LIKE 'discovery:%' AND created > ?",
                            (now - 86400,)).fetchone()[0]
         findings = [e for e in stage.top(db, k=3, now=now) if e["salience"] >= 4]
@@ -37,6 +38,8 @@ def line(now: float | None = None) -> str:
         n = len(recall.get("hits", []))
         parts.append(f"{n} note{'s' if n != 1 else ''} recalled last turn" if n else "nothing to recall last turn")
     parts.append(f"{total:,} things known")
+    if turns:
+        parts.append(f"remembered {turns} exchange{'s' if turns != 1 else ''} today")
     if learned:
         parts.append(f"learned {learned} today")
     if found:

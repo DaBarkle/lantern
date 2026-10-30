@@ -137,8 +137,9 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: boo
     a session can tell a fresh fact from one that may have moved on."""
     out, used = [], 0
     # A long item is stored in chunks; its first chunk (lowest id) opens with the summary line.
+    # Discovery cards are summarised elsewhere; the index is for what was learned and curated.
     for text, created in db.execute("SELECT text, created FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
-                                    "AND status='active' GROUP BY source) ORDER BY created DESC", (kind,)):
+                                    "AND status='active' AND source NOT LIKE 'discovery:%' GROUP BY source) ORDER BY created DESC", (kind,)):
         line = text.strip().splitlines()[0][:INDEX_LINE if dated else 300] if text.strip() else ""
         if dated and line:
             # A note about a state ("SABnzbd is stopped") goes stale in days; a note about a design does not.
@@ -149,6 +150,13 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: boo
         out.append(line)
         used += len(line)
     return out
+
+
+def learned_since(db: sqlite3.Connection, since: float, limit: int = 6) -> list[str]:
+    """Rules, facts, patterns and profile lines curated or stated since a time, newest first (not discovery cards)."""
+    rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile') AND status='active' "
+                      "AND created > ? AND source NOT LIKE 'discovery:%' ORDER BY created DESC LIMIT ?", (since, limit))
+    return [f"[{k}] {t.strip().splitlines()[0][:160]}" for k, t in rows if t.strip()]
 
 
 def rule_items(db: sqlite3.Connection) -> list[tuple[int, str]]:

@@ -24,9 +24,9 @@ PORTS = {32400: "Plex", 8123: "Home Assistant", 8443: "UniFi Network", 3001: "Up
          8181: "Tautulli", 8265: "Tdarr", 9000: "Portainer", 1883: "MQTT broker"}
 SKIP_DIRS = {"node_modules", ".cache", ".local", ".var", "Library", "AppData", ".cargo", ".rustup", "go", ".npm"}
 TIMEOUT = 10
-DEPTHS = {1: "conversations: memory of sessions only, no scouts", 2: "workspace (default): git repos and dev tools",
-          3: "home: containers, services, SSH hosts, well-known local service ports",
-          4: "life: also accounts you connect on purpose through Claude connectors"}
+DEPTHS = {1: "conversations: memory of sessions only, no scouts",
+          2: "workspace (default): this machine, your git repos and dev tools",
+          3: "home: also containers, services, installed apps, SSH hosts and local servers"}
 
 
 def settings_path() -> Path:
@@ -61,7 +61,7 @@ def scout_repos(root: Path | None = None, max_depth: int = 3) -> list[dict]:
         except OSError:
             return
         if any(e.name == ".git" for e in entries):
-            out.append({"id": f"repo:{d}", "kind": "repo", "name": d.name, "detail": str(d), "check": {"type": "path", "path": str(d)}})
+            out.append({"id": f"repo:{d}", "kind": "repo", "name": d.name, "detail": _repo_detail(d), "check": {"type": "path", "path": str(d)}})
             return  # a repo's subfolders are part of it
         if depth < max_depth:
             for e in entries:
@@ -73,9 +73,56 @@ def scout_repos(root: Path | None = None, max_depth: int = 3) -> list[dict]:
     return out
 
 
+def scout_system() -> list[dict]:
+    """One card for the machine itself: OS, CPU, memory, GPU. Read-only, from files and `lspci`."""
+    import platform
+    parts = []
+    try:
+        rel = dict(l.split("=", 1) for l in Path("/etc/os-release").read_text().splitlines() if "=" in l)
+        parts.append(rel.get("PRETTY_NAME", "").strip('"'))
+    except OSError:
+        parts.append(f"{platform.system()} {platform.release()}")
+    try:
+        cpu = next((l.split(":", 1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "")
+        mem = next((int(l.split()[1]) // (1024 * 1024) for l in Path("/proc/meminfo").read_text().splitlines() if l.startswith("MemTotal")), 0)
+        parts += [p for p in (cpu, f"{mem} GB RAM" if mem else "") if p]
+    except OSError:
+        pass
+    gpu = [l.split(": ", 1)[-1] for l in _run(["lspci"]).splitlines() if "VGA" in l or "3D controller" in l]
+    parts += [f"GPU {g[:60]}" for g in gpu[:2]]
+    host = platform.node() or "this machine"
+    return [{"id": "system", "kind": "machine", "name": host, "detail": ", ".join(p for p in parts if p), "check": None}]
+
+
+def _repo_detail(d: Path) -> str:
+    remote = _run(["git", "-C", str(d), "remote", "get-url", "origin"]).strip()
+    last = _run(["git", "-C", str(d), "log", "-1", "--format=%cs"]).strip()
+    return ", ".join(x for x in (str(d), f"origin {remote}" if remote else "no remote", f"last commit {last}" if last else "") if x)
+
+
+def scout_apps() -> list[dict]:
+    """Desktop apps the user installed (Flatpak), by name."""
+    out = []
+    for line in _run(["flatpak", "list", "--app", "--columns=application,name"]).splitlines():
+        if "\t" in line:
+            app, name = line.split("\t", 1)
+            out.append({"id": f"app:{app}", "kind": "app", "name": name.strip(), "detail": f"Flatpak {app}", "check": None})
+    return out
+
+
 def scout_tools() -> list[dict]:
     return [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": shutil.which(t), "check": {"type": "tool", "name": t}}
             for t in DEV_TOOLS if shutil.which(t)]
+
+
+SECRET_MANAGERS = {"op": "1Password CLI", "bw": "Bitwarden CLI", "pass": "pass (GPG store)", "gopass": "gopass",
+                   "secret-tool": "the desktop keyring (Secret Service)", "keepassxc-cli": "KeePassXC", "vault": "HashiCorp Vault CLI"}
+
+
+def scout_secrets() -> list[dict]:
+    """Which password managers are here (presence only, nothing opened), so setup can say how secrets should flow."""
+    return [{"id": f"secrets:{t}", "kind": "secret-manager", "name": name, "detail": f"{t} at {shutil.which(t)}", "check": None}
+            for t, name in SECRET_MANAGERS.items() if shutil.which(t)]
 
 
 def scout_containers() -> list[dict]:
@@ -141,7 +188,7 @@ def scout_vpn() -> list[dict]:
             for t in ("tailscale", "wg", "zerotier-cli") if shutil.which(t)]
 
 
-SCOUTS = {2: [scout_repos, scout_tools], 3: [scout_containers, scout_services, scout_ssh_hosts, scout_ports, scout_vpn]}
+SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets], 3: [scout_containers, scout_services, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
 
 
 def discover(depth: int) -> list[dict]:
@@ -153,7 +200,9 @@ def discover(depth: int) -> list[dict]:
 
 
 def card(find: dict) -> str:
-    return f"Capability on this machine: {find['name']} ({find['kind']}), {find['detail']}."
+    if find["kind"] == "machine":
+        return f"This machine, {find['name']}: {find['detail']}."
+    return f"On this machine: {find['name']} ({find['kind']}), {find['detail']}."
 
 
 def accept(finds: list[dict]) -> None:
@@ -197,22 +246,39 @@ PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "l
          "UniFi Network": "lantern-unifi"}
 
 
+def summary() -> str:
+    """What is known about this machine, in one short paragraph for a session start."""
+    caps = settings().get("capabilities", {})
+    if not caps:
+        return ""
+    kinds: dict[str, list[str]] = {}
+    for cid, c in caps.items():
+        kinds.setdefault(cid.split(":", 1)[0], []).append(c["name"])
+    labels = {"system": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "service": "services",
+              "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers"}
+    parts = []
+    for k, names in kinds.items():
+        if k == "system":
+            parts.insert(0, "machine " + ", ".join(names))
+        else:
+            shown = ", ".join(sorted(names)[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+            parts.append(f"{len(names)} {labels.get(k, k)} ({shown})")
+    return "; ".join(parts)
+
+
 def auto(now: float | None = None) -> list[dict]:
     """Daily: scout within the depth the user chose, remember what is new, and say so on Stage (once). The depth is
     the consent boundary; within it nothing needs accepting by hand."""
     from . import memory, stage
     s = settings()
     known = s.get("capabilities", {})
-    finds = [f for f in discover(s.get("depth", 2)) if f["id"] not in known]
+    finds = [f for f in discover(min(3, s.get("depth", 2))) if f["id"] not in known]
     if not finds:
         return []
     accept(finds)
-    packs = sorted({PACKS[f["name"]] for f in finds if f["name"] in PACKS})
     msg = "Found on this machine and remembered: " + ", ".join(f["name"] for f in finds[:12])
     if len(finds) > 12:
         msg += f" and {len(finds) - 12} more"
-    if packs:
-        msg += ". Packs that add skills for these: " + ", ".join(packs) + " (claude plugin install <pack>@lantern)"
     db = memory.connect()
     try:
         stage.publish(db, "discovery/new", "discovery", msg, score=3, days=2, now=now)
@@ -226,9 +292,12 @@ def cli(argv: list[str]) -> int:
     s = settings()
     if argv[:1] == ["depth"]:
         if len(argv) == 2 and argv[1] in "1234":
-            s["depth"] = int(argv[1])
+            s["depth"] = min(3, int(argv[1]))
             save_settings(s)
-        print(f"depth {s['depth']}, {DEPTHS[s['depth']]}")
+            found = auto()  # a wider look takes effect at once, not tomorrow
+            print(f"depth {s['depth']}, {DEPTHS[s['depth']]}; found and remembered {len(found)} new things")
+            return 0
+        print(f"depth {min(3, s['depth'])}, {DEPTHS[min(3, s['depth'])]}")
         return 0
     depth = s.get("depth", 2)
     if depth < 2:

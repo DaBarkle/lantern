@@ -25,20 +25,37 @@ def profile(start: Path | None = None) -> str | None:
     return None
 
 
+def _os_default() -> Path:
+    home = Path.home()
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "lantern"
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "lantern"
+    return Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")) / "lantern"
+
+
+def _pointer() -> Path:
+    """Where the hooks note the data folder Claude Code gave them, so `lantern ...` commands run from a shell (which has
+    no CLAUDE_PLUGIN_DATA) use the same folder as the session."""
+    return _os_default() / "data-dir"
+
+
 def data_dir() -> Path:
-    # Inside Claude Code the plugin data dir survives updates; outside it (scheduler jobs) use the OS default.
     if os.environ.get("CLAUDE_PLUGIN_DATA"):
         base = Path(os.environ["CLAUDE_PLUGIN_DATA"])
+        try:
+            if not _pointer().exists() or _pointer().read_text().strip() != str(base):
+                _pointer().parent.mkdir(parents=True, exist_ok=True)
+                _pointer().write_text(str(base))
+        except OSError:
+            pass
     elif os.environ.get("LANTERN_HOME"):
         base = Path(os.environ["LANTERN_HOME"])
     else:
-        home = Path.home()
-        if sys.platform == "win32":
-            base = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "lantern"
-        elif sys.platform == "darwin":
-            base = home / "Library" / "Application Support" / "lantern"
-        else:
-            base = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")) / "lantern"
+        try:
+            base = Path(_pointer().read_text().strip())
+        except OSError:
+            base = _os_default()
     name = profile()
     return base / "profiles" / name if name else base
 

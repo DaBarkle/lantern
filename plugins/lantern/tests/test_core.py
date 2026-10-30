@@ -19,12 +19,24 @@ class PathsTest(unittest.TestCase):
 
     def test_os_defaults(self):
         env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME", "XDG_DATA_HOME", "APPDATA")}
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(paths.Path, "home", return_value=Path("/h")):
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(paths.Path, "home", return_value=Path("/h")), \
+                mock.patch.object(paths, "_pointer", return_value=Path("/nonexistent/data-dir")):
             for platform, want in [("linux", "/h/.local/share/lantern"),
                                    ("darwin", "/h/Library/Application Support/lantern"),
                                    ("win32", "/h/AppData/Roaming/lantern")]:
                 with mock.patch.object(paths.sys, "platform", platform):
                     self.assertEqual(paths.data_dir(), Path(want))
+
+
+class PointerTest(unittest.TestCase):
+    def test_shell_commands_find_the_sessions_data_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(paths, "_os_default", return_value=Path(d) / "default"):
+                with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/plugin-data"}):
+                    self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a hook, inside Claude Code
+                env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME")}
+                with mock.patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a `lantern` command from a shell
 
 
 class ProfileTest(unittest.TestCase):
