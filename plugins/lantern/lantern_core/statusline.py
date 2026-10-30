@@ -31,10 +31,10 @@ def in_terminal() -> bool:
 
 def _write(path: Path, cfg: dict) -> None:
     if path.exists():
-        path.with_name(f"settings.json.{time.strftime('%Y%m%d-%H%M%S')}.lantern-bak").write_text(path.read_text())
+        path.with_name(f"settings.json.{time.strftime('%Y%m%d-%H%M%S')}.lantern-bak").write_bytes(path.read_bytes())
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name("settings.json.lantern-tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(path)
 
 
@@ -43,7 +43,7 @@ def ensure() -> tuple[str, str, bool]:
     user removed or replaced afterwards: that was their choice."""
     path = settings_file()
     try:
-        cfg = json.loads(path.read_text()) if path.exists() else {}
+        cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except (OSError, ValueError) as e:
         return "warn", f"the status line is not set up: {path} could not be read ({e})", False
     if not isinstance(cfg, dict):

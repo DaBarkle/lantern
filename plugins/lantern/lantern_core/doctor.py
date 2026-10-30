@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from . import discovery, memory, resources, semantic, shield, stage, statusline
+from . import discovery, memory, paths, resources, semantic, shield, stage, statusline
 from .paths import ensure_data_dir
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -43,22 +43,54 @@ def start_server() -> None:
     except OSError:
         pass
     marker.touch()
-    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    # Its stderr goes to a log: a server that cannot start (no wheel for this CPU, a reserved port, no room) says why there.
+    log = open(ensure_data_dir() / "serve.log", "w", encoding="utf-8")
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": log}
     kw["creationflags" if sys.platform == "win32" else "start_new_session"] = 0x00000208 if sys.platform == "win32" else True
-    subprocess.Popen(["uv", "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],
+    subprocess.Popen([paths.uv(), "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],
                      env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())}, **kw)
+
+
+WARM_SECONDS = 120  # a server started longer ago than this and still not answering did not come up
 
 
 def check_semantic():
     if semantic.search(ensure_data_dir(), "doctor") is None:
         if not resources.can_spawn():
             return WARN, "memory server is down and the machine is short of memory, so it was not started; recall is keyword-only"
+        marker, log = ensure_data_dir() / "serve.started", ensure_data_dir() / "serve.log"
+        try:
+            age = time.time() - marker.stat().st_mtime
+        except OSError:
+            age = None
+        if age is not None and WARM_SECONDS < age < START_EVERY:
+            why = ""
+            try:
+                why = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1][:160]
+            except (OSError, IndexError):
+                pass
+            return WARN, (f"memory server did not come up after its last start ({why or 'no error written'}; full log in {log}); "
+                          "recall is keyword-only on this machine")
         try:
             start_server()  # repair rather than report, as the plugin monitor would at the next session
         except OSError as e:
             return WARN, f"memory server was down and could not be started ({e}); recall is keyword-only"
         return OK, "memory server was down; started it (recall is keyword-only until it is warm)"
     return OK, "memory server answering"
+
+
+def check_hook_errors():
+    """Hooks that crashed in the last day (hooks.run catches and logs them, so a prompt is never blocked)."""
+    try:
+        lines = (ensure_data_dir() / "errors.jsonl").read_text(encoding="utf-8").splitlines()[-200:]
+    except OSError:
+        return OK, "no hook errors recorded"
+    recent = [json.loads(l) for l in lines if l.strip()]
+    recent = [r for r in recent if time.time() - r.get("ts", 0) < 86400]
+    if not recent:
+        return OK, "no hook errors in the last day"
+    last = recent[-1]
+    return WARN, f"{len(recent)} hook error(s) in the last day, last in {last.get('hook')}: {last.get('error', '')[:160]}"
 
 
 def check_memory_fresh():
@@ -143,7 +175,8 @@ def check_packs():
 
 
 CHECKS = {"data-dir": check_data_dir, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
-          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "resources": check_resources, "packs": check_packs}
+          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "hook-errors": check_hook_errors,
+          "resources": check_resources, "packs": check_packs}
 
 
 def run_all() -> list[tuple[str, str, str]]:

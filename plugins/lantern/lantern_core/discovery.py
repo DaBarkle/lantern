@@ -86,7 +86,7 @@ def _run(cmd: list[str]) -> str:
     if HOST_EXEC and (cmd[0] in HOST_TOOLS or not shutil.which(cmd[0])):
         cmd = [HOST_EXEC, *cmd]  # the container's own systemctl or podman cannot see the host; ask the host
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     tool = cmd[1] if HOST_EXEC and cmd[0] == HOST_EXEC else cmd[0]
@@ -123,7 +123,7 @@ def scout_system() -> list[dict]:
     import platform
     parts = []
     try:
-        rel = dict(l.split("=", 1) for l in (HOST_ROOT / "etc/os-release").read_text().splitlines() if "=" in l)
+        rel = dict(l.split("=", 1) for l in (HOST_ROOT / "etc/os-release").read_text(encoding="utf-8", errors="replace").splitlines() if "=" in l)
         parts.append(rel.get("PRETTY_NAME", "").strip('"'))
     except OSError:
         parts.append(platform.platform(aliased=True, terse=True))  # "macOS-14.1", "Windows-11"
@@ -354,7 +354,7 @@ def scout_services() -> list[dict]:
 
 def scout_ssh_hosts() -> list[dict]:
     try:
-        lines = (Path.home() / ".ssh" / "config").read_text().splitlines()
+        lines = (Path.home() / ".ssh" / "config").read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     hosts = [h for l in lines if l.strip().lower().startswith("host ") for h in l.split()[1:] if "*" not in h and "?" not in h]
@@ -499,6 +499,10 @@ def frontiers() -> list[dict]:
     if IN_CONTAINER and not HOST_EXEC:
         out.append(frontier("host", "the host behind this container", "this session runs in a container with no way to the host",
                             "the host's containers, services and tools", "start the session on the host, or allow distrobox-host-exec"))
+    if shield.keychain_missing() and not any(m["ready"] for m in shield.manager_status()["managers"]):
+        out.append(frontier("keychain", "a keychain for secrets", shield.keychain_missing().split(";")[0],
+                            "holding API keys and passwords for commands without pasting them into chat",
+                            "link a password manager CLI (pass, bw, op, keepassxc-cli) or hand secrets over in a desktop session"))
     for m in shield.manager_status()["managers"]:
         if not m["ready"]:
             out.append(frontier(f"secrets:{m['tool']}", m["name"], m["why"], "reading linked items at run time, nothing pasted into chat", m["ask"]))

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -65,5 +66,17 @@ def data_dir() -> Path:
 
 def ensure_data_dir() -> Path:
     d = data_dir()
-    d.mkdir(parents=True, exist_ok=True)
+    if not d.is_dir():
+        d.mkdir(parents=True, exist_ok=True)
+        if sys.platform != "win32":
+            try:
+                d.chmod(0o700)  # memory holds the user's conversations: on a shared machine other accounts must not read it
+            except OSError:
+                pass
     return d
+
+
+def uv() -> str:
+    """The uv that runs Lantern. `uv run` names itself in $UV, so a child started from a scheduler's bare PATH or a GUI
+    app's minimal PATH still finds it; the bare name is the last resort."""
+    return os.environ.get("UV") or shutil.which("uv") or "uv"
