@@ -175,7 +175,16 @@ def check_packs():
     return OK, f"packs on: {', '.join(on)}" + (f" (restored the skill of {', '.join(fixed)})" if fixed else "")
 
 
-CHECKS = {"data-dir": check_data_dir, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
+def check_hook_smoke():
+    """Every hook entry point against a throwaway returning-session profile: a crash shows here, never only in a log."""
+    from . import smoke
+    problems = smoke.run()
+    if problems:
+        return FAIL, "a hook crashes on a returning session: " + problems[0].splitlines()[0] + f" ({len(problems)} problem(s); run `lantern doctor` for the trace)"
+    return OK, "every hook runs clean on a returning session"
+
+
+CHECKS = {"data-dir": check_data_dir, "hook-smoke": check_hook_smoke, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
           "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "hook-errors": check_hook_errors,
           "resources": check_resources, "packs": check_packs}
 
