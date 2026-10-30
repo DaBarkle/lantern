@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lantern_core import approvals, discovery, shield, sshkey  # noqa: E402
+from lantern_core import approvals, discovery, hooks, shield, sshkey  # noqa: E402
 
 NOT_READY = {"managers": [{"scheme": "op", "tool": "op", "name": "1Password", "ready": False,
                            "why": "the 1Password CLI is installed but no account is added", "ask": "add it once"}]}
@@ -49,6 +49,8 @@ class FrontierTest(unittest.TestCase):
         self.assertIn("Sonarr: it answers locally", discovery.frontier_block())
         self.assertEqual(len(discovery.frontiers_touching("why is the sonarr queue stuck")), 1)
         self.assertIn("secret ask SONARR_API_KEY", discovery.frontiers_touching("sonarr")[0])
+        self.assertIn("question tool", discovery.frontiers_touching("sonarr")[0])  # the key is offered as a choice, never as syntax to type
+        self.assertIn('"Not now"', hooks.FIRST_RUN)
         self.assertEqual(discovery.frontiers_touching("how is the disk doing"), [])
 
     def test_depth_two_is_itself_a_frontier(self):
