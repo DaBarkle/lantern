@@ -313,6 +313,7 @@ def session_start(payload: dict) -> dict | None:
                                                                 lookalikes=lookalikes())]
     if tail_block and not first:
         stored = memory_rules_count
+        discovery.update_settings(since_last={**(discovery.settings().get("since_last") or {}), "block": "\n".join(tail_block)[:6000], "block_at": time.time()})
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
                   "these lines, using their counts and reasons word for word (names of things as the register line above says); never split a count into parts of your own; name every "
                   "item in a 'Found on this machine' line; then answer):"] + tail_block
@@ -495,10 +496,13 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
                       for h in titles]
     if _WHAT_CHANGED.search(prompt):
-        lines += ["This asks what changed: the answer is the SINCE LAST SESSION block in your session context (its counts, the new, "
-                  "changed, back-again and resolved items with their reasons, what was found on this machine, where the last session "
-                  "left off and what was left unfinished) plus the watches line. File timestamps in this folder are not the answer; "
-                  "use them only to add detail to an item already in that block. Name each unfinished item: done, asked again, or dropped with a reason."]
+        since = discovery.settings().get("since_last") or {}
+        block = since.get("block") if time.time() - since.get("block_at", 0) < 12 * 3600 else ""
+        lines = (["This asks what changed. Lantern computed the answer at session start; open the reply with it, counts and names as "
+                  "given, one line per new, changed, resolved or back-again item, then the unfinished items (done now, asked again once, "
+                  "or dropped with a reason). File timestamps in this folder are not the answer; use them only to add detail to an item "
+                  "already listed."] + ([block] if block else ["(The SINCE LAST SESSION block is in your session context above.)"])
+                 + [""] + lines)
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
         lines += ["A rule reaches exactly what it names: one about X says nothing about Y, so if this request is outside the "
@@ -508,12 +512,14 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
                       "applies either way."]
     since = discovery.settings().get("since_last") or {}
-    if since.get("names") and time.time() - since.get("at", 0) < 3600 and sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1:
+    first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
+    if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
         said = turn["reply"].lower()
         missing = [n for n in since["names"] if n.lower() not in said]
         if missing:
-            return {"decision": "block", "reason": "The first reply of a returning session names every item the SINCE LAST SESSION block lists as "
-                    "new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8]) + ". Add one line per item with its state."}
+            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
+                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
+                    + ". Add one line per item with its state."}
     at = discovery.settings().get("insights_at", 0)
     if HEALTH_ASK.search(prompt) and time.time() - at < SNAPSHOT_FRESH_S:
         # The cheap checks run again right now, so the answer is current and the reply never needs an "I haven't looked
@@ -706,12 +712,14 @@ def stop_nudge(payload: dict) -> dict | None:
     if _is_system(turn["user"]):
         return None
     since = discovery.settings().get("since_last") or {}
-    if since.get("names") and time.time() - since.get("at", 0) < 3600 and sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1:
+    first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
+    if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
         said = turn["reply"].lower()
         missing = [n for n in since["names"] if n.lower() not in said]
         if missing:
-            return {"decision": "block", "reason": "The first reply of a returning session names every item the SINCE LAST SESSION block lists as "
-                    "new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8]) + ". Add one line per item with its state."}
+            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
+                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
+                    + ". Add one line per item with its state."}
     at = discovery.settings().get("insights_at", 0)
     fresh = time.time() - at < SNAPSHOT_FRESH_S
     if payload.get("stop_hook_active"):  # already nudged this turn: never loop, but never leave the user with nothing either

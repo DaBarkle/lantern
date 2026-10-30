@@ -165,8 +165,12 @@ class LedgerTest(unittest.TestCase):
     def test_what_changed_points_at_the_computed_block(self):
         with mock.patch.object(hooks.semantic, "search", return_value=None):
             ctx = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("SINCE LAST SESSION block", ctx)
             self.assertIn("File timestamps in this folder are not the answer", ctx)
+            self.assertTrue(ctx.startswith("This asks what changed"), ctx[:80])  # at the top, not buried under recall
+        with mock.patch.object(hooks.semantic, "search", return_value=None), \
+                mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"block": "Since the last session: 0 findings resolved, 2 new, 29 unchanged. New: failed unit lantern-sim-fail.service; uncommitted work in ~/Documents/Week/simrepo.", "block_at": time.time()}}):
+            ctx = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("New: failed unit lantern-sim-fail.service", ctx)  # the block itself travels with the question
             r = hooks.user_prompt_submit({"prompt": "add a nightly timer", "session_id": "s1"})
         self.assertNotIn("File timestamps", (r or {}).get("hookSpecificOutput", {}).get("additionalContext", ""))
 
@@ -246,8 +250,11 @@ class LedgerTest(unittest.TestCase):
             self.assertIn("Not named yet: lantern-sim-fail.service", out["reason"])
             write(p, [user("what changed?"), assistant("lantern-sim-fail.service is resolved and simrepo is new.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
-            write(p, [user("hi"), assistant("Hello."), user("what changed?"), assistant("Nothing much.")])
-            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # only the first reply is held to it
+            write(p, [user("hi"), assistant("Hello."), user("add a timer"), assistant("Done.")])
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a later unrelated turn is not held to it
+            write(p, [user("hi"), assistant("Hello."), user("what changed since yesterday?"), assistant("Both changes are drafted below.")])
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+            self.assertIn("Not named yet: lantern-sim-fail.service, simrepo", out["reason"])  # a since-last question is, whenever it comes
 
     def test_a_background_accept_does_not_clobber_session_settings(self):
         from lantern_core import discovery
