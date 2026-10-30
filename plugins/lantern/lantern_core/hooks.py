@@ -184,6 +184,7 @@ def session_start(payload: dict) -> dict | None:
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
             alerts.run(db, send=False)  # the user sees them here; the phone only hears what trips while they are away
+            alerts.ensure_scheduled(entry)  # the hourly check installs itself once the phone can be reached
             discovery.refresh_frontiers()  # and what is beyond reach closes by itself once its key or sign-in is there
             moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"}, db)
         profile = memory.profile(db, PROFILE_CHARS)

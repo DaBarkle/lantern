@@ -5,10 +5,12 @@ A session start marks the open findings as heard without sending (the user is re
 phone only learns what tripped while they were away. alerts.json remembers what the phone has heard.
 """
 import json
+import subprocess
 import time
+from pathlib import Path
 
-from . import approvals, discovery, stage
-from .paths import ensure_data_dir
+from . import approvals, discovery, schedule, stage
+from .paths import data_dir, ensure_data_dir
 
 KINDS = ("failed", "down", "disk", "backup")  # worth a buzz; project work does not change while the user is away
 MAX_LINES = 5  # per run; further new findings fold into one line
@@ -83,13 +85,28 @@ def _post(cfg: dict, message: str) -> None:
     approvals._post(cfg["server"], {"topic": cfg["topic"], "title": "Lantern watch", "message": message[:1000], "priority": 3})
 
 
+def ensure_scheduled(entry: Path) -> bool:
+    """Install the hourly watch timer (user scope, read-only checks) once phone approvals exist, once per plugin copy,
+    so nobody has to run `schedule --apply`. True when it was installed just now."""
+    s = discovery.settings()
+    if approvals.ready() is not None or not settings()["on"] or s.get("watch_scheduled") == str(entry):
+        return False
+    try:
+        schedule.apply(schedule.plan("watch", None, entry, data=data_dir()))
+    except (OSError, subprocess.CalledProcessError):
+        return False  # no scheduler reachable (a container, say): session starts and the nightly doctor still check
+    discovery.save_settings({**discovery.settings(), "watch_scheduled": str(entry)})
+    return True
+
+
 def status() -> str:
     s = settings()
     at = _state().get("ran")
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(at)) if at else "never"
     channel = "sends to the phone" if approvals.ready() is None else "needs phone approvals set up first (`approve setup`)"
+    timer = "hourly check scheduled" if discovery.settings().get("watch_scheduled") else "hourly check not scheduled here (session starts and the nightly doctor still check)"
     return (f"phone alerts {'on' if s['on'] else 'off'} for newly tripped watches ({', '.join(s['kinds'])}); "
-            f"{channel}; last watch check {when}")
+            f"{channel}; {timer}; last watch check {when}")
 
 
 def cli(argv: list[str]) -> int:
