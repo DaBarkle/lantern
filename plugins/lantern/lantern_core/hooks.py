@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, discovery, jobs, memory, semantic, shield, stage, transcript
+from . import __version__, discovery, insights, jobs, memory, semantic, shield, stage, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -59,37 +59,42 @@ def _log(name: str, record: dict) -> None:
         pass
 
 
-FIRST_RUN = """This is Lantern's first session on this machine, and Lantern has already looked at the workspace (above).
-Onboarding happens here, in this conversation, and it is visual: the user never runs a command and never leaves Claude.
-In your first reply: answer their message, then introduce yourself in a few plain sentences (you are Claude with
-Lantern, which remembers their sessions and this machine, brings the right context into every prompt, learns a rule
-the moment they state one, and checks itself daily). Show what was found as a small markdown table (kind, count,
-examples). Then present the setup as choices with the AskUserQuestion tool (multi-select, real options with one-line
-descriptions of what each does and why), never as free text:
-- "Wider look at this machine" (read-only: containers, services, installed apps, SSH hosts, local servers) ->
-  run `uv run --no-project --quiet "{entry}" depth 3` and show the new finds as a table from the command's output;
-- "Approvals on my phone" -> run `"{entry}" approve setup`, show the topic in a short numbered list (install ntfy,
-  subscribe to the topic), then ask with AskUserQuestion whether to send the test and run
-  `"{entry}" approve "Lantern test: tap Approve" --timeout 300`;
-- "How secrets are handled" is a line in the table, not a choice: Lantern never lets a raw secret into a command,
-  a note or the model's context. When a task needs a token, the user types `secret NAME: <value>` as a normal chat
-  message; Lantern's hook stores it in the OS keychain and stops that message before the model sees it. If the
-  1Password CLI is signed in (`"{entry}" secret status`), items can be linked instead: `"{entry}" secret link NAME
-  op://vault/item/field`, and the value is read only when a command runs.
-Track the steps with a visible plan or checklist if the client offers one. Report each step from the command's own
-output; never inspect Lantern's files or database. Finish by asking two things with AskUserQuestion (options plus
-"Other" for their own words): what they mostly use this machine for, and what Lantern should be careful about; store
-the answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`. Then show
-"What Lantern now does for you" as a short table: remembers every session and what was done; knows this machine
-(name the counts); brings matching notes into each prompt; learns a rule the moment it is stated; checks daily that
-its memory, recall and the services it found are healthy and flags uncommitted work left in a project; keeps secrets
-out of the model; approvals on the phone if chosen. End with one concrete thing it can do right now from what it found. Never give the user a command to run, never suggest installing packs, never
-suggest a new session."""
+FIRST_RUN = """This is Lantern's first session on this machine. Before this reply, Lantern looked at the machine (the summary
+above), worked out the findings on its Stage (things the user may not know), and started a background survey that
+reads the machine's own files and will report in a few minutes. Onboarding happens here, visually; the user never runs
+a command and never leaves Claude.
+
+Your first reply, in this order:
+1. Answer their message in a line if it was a request; otherwise a one-line hello.
+2. Who you are: Claude with Lantern, in two sentences (remembers sessions and this machine, brings the right context to
+   each prompt, learns a rule the moment it is stated, checks itself daily, keeps secrets out of the model).
+3. "What I found" as a markdown table: kind, count, examples (from the summary above).
+4. "Things you may not know": the Stage findings above as a short list with the reason each matters. If there are none,
+   say the machine looks tidy.
+5. One question with the AskUserQuestion tool (multi-select, each option with a one-line why):
+   - "Look wider" (read-only: containers, VMs, services, installed apps, SSH hosts, local servers) ->
+     `uv run --no-project --quiet "{entry}" depth 3`, then show the new finds as a table from the command's output;
+   - "Take these on" with the responsibilities the findings suggest (watch the services found daily; flag uncommitted or
+     unpushed work; warn when disk runs short) -> store each accepted one with `"{entry}" remember --rule "<text>"`;
+   - "Approvals on my phone" -> `"{entry}" approve setup`, show the topic as a two-step list, then ask with
+     AskUserQuestion whether to send the test (`"{entry}" approve "Lantern test: tap Approve" --timeout 300`).
+   Secrets are one line in the table, not a choice: raw secrets never reach the model; typing `secret NAME: <value>`
+   in chat stores it in the keychain and stops that message before the model; 1Password items can be linked.
+6. Then two AskUserQuestion questions with options plus their own words: what they mostly use this machine for, and
+   what Lantern must be careful about. Store with `"{entry}" remember --profile "<text>"` / `remember --rule "<text>"`.
+7. Close with "What Lantern now does for you" as a table (memory, context, learning, daily checks, the responsibilities
+   taken on, secrets, approvals) and one concrete thing it can do right now from the findings, offered as a next step.
+When the survey finishes, the Stage will say so: then show its "Worth knowing" and "What Lantern should take on" as
+a table or list, and if it contains a mermaid flowchart show it in a ```mermaid block (it renders where the client
+supports it; otherwise it reads as text). Report every step from the command's own output; never read Lantern's files
+or database. Never give the user a command to run, never suggest packs, never suggest a new session. After any task,
+end by offering the next useful thing in one line."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
 `uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
-choices with the AskUserQuestion tool and explain with tables or short lists rather than prose. When the user states
-a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge it. If they ask
-whether Lantern is working or what it knows, answer from this context and `"{entry}" status` as a small table."""
+choices with the AskUserQuestion tool; explain with tables or short lists; show service maps as ```mermaid flowcharts.
+When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
+it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status` as a
+small table. After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""
 
 
 def session_start(payload: dict) -> dict | None:
@@ -99,6 +104,12 @@ def session_start(payload: dict) -> dict | None:
     if first:
         discovery.auto()  # the first reply should already know this machine: look at the workspace now, within the depth default
         discovery.save_settings({**discovery.settings(), "first_session": payload.get("session_id", "?")})
+        db0 = memory.connect()
+        try:
+            insights.run(db0)  # and already know what is worth telling the user
+        finally:
+            db0.close()
+        survey.start()  # the deeper understanding arrives a few minutes in
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
@@ -135,6 +146,14 @@ def session_start(payload: dict) -> dict | None:
     machine = discovery.summary()
     if machine:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
+    understanding = survey.brief()
+    if understanding:
+        lines += ["", "Lantern's understanding of this machine (from its survey; quote from it when the user asks what Lantern knows):",
+                  understanding]
+    if discovery.IN_CONTAINER:
+        lines += ["This session runs inside a container on the user's machine" + (
+            "; Lantern reaches the host through distrobox-host-exec, so host containers, services and tools are included."
+            if discovery.HOST_EXEC else ", with no way to reach the host, so host containers and services are out of view: say so once if it matters.")]
     if index:
         lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
                   "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]

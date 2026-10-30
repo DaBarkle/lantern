@@ -53,3 +53,18 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual(discovery.settings()["depth"], 2)  # workspace by default
         discovery.cli(["depth", "3"])
         self.assertEqual(discovery.settings()["depth"], 3)
+
+
+class HostExecTest(unittest.TestCase):
+    def test_commands_missing_in_a_container_go_to_the_host(self):
+        calls = []
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(stdout="plex\tdocker.io/plex\n", returncode=0)
+        with mock.patch.object(discovery, "HOST_EXEC", "/usr/bin/distrobox-host-exec"), \
+                mock.patch.object(discovery.shutil, "which", return_value=None), \
+                mock.patch.object(discovery.subprocess, "run", side_effect=fake):
+            self.assertEqual(discovery._which("podman"), "plex\tdocker.io/plex")  # whatever the host answers
+            discovery._run(["podman", "ps"])
+        self.assertEqual(calls[-1][:2], ["/usr/bin/distrobox-host-exec", "podman"])

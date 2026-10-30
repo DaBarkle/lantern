@@ -102,9 +102,18 @@ def main(argv: list[str]) -> int:
         print(f"curated {curate.run()} new rules and facts")
         jobs.mark("curate", "done")
         return 0
+    if argv == ["job", "survey"]:
+        from lantern_core import survey
+        survey.run()
+        return 0
     if argv == ["job", "discover"]:
-        from lantern_core import jobs
+        from lantern_core import insights, jobs
         print(f"discovered {len(discovery.auto())} new capabilities")
+        db = memory.connect()
+        try:
+            print(f"{len(insights.run(db))} insights")
+        finally:
+            db.close()
         jobs.mark("discover", "done")
         return 0
     if argv == ["job", "doctor"]:

@@ -17,7 +17,13 @@ from pathlib import Path
 from . import memory
 from .paths import ensure_data_dir
 
-DEV_TOOLS = ["git", "gh", "uv", "python3", "node", "npm", "cargo", "go", "java", "dotnet", "code", "nvim", "docker", "podman"]
+DEV_TOOLS = ["git", "gh", "uv", "python3", "node", "npm", "cargo", "go", "java", "dotnet", "code", "nvim", "vim", "tmux", "zsh", "fish",
+             "docker", "podman", "kubectl", "terraform", "aws", "gcloud", "az", "brew", "distrobox"]
+# A Claude session may run inside a container (the desktop app's distrobox, for one). The host is still the machine
+# the user means, so commands that look at the host go through distrobox-host-exec when it is there.
+IN_CONTAINER = Path("/run/.containerenv").exists() or Path("/.dockerenv").exists() or bool(os.environ.get("CONTAINER_ID"))
+HOST_EXEC = shutil.which("distrobox-host-exec") or shutil.which("host-spawn") if IN_CONTAINER else None
+HOST_ROOT = Path("/run/host") if IN_CONTAINER and Path("/run/host/etc").exists() else Path("/")
 # Well-known local services. Only a TCP connect to localhost: nothing is sent.
 PORTS = {32400: "Plex", 8123: "Home Assistant", 8443: "UniFi Network", 3001: "Uptime Kuma", 8096: "Jellyfin",
          8989: "Sonarr", 7878: "Radarr", 9696: "Prowlarr", 8080: "SABnzbd or another web app", 5055: "Overseerr/Jellyseerr",
@@ -44,7 +50,21 @@ def save_settings(s: dict) -> None:
     settings_path().write_text(json.dumps(s, indent=2))
 
 
+def _which(name: str) -> str | None:
+    """Where a tool is, on this machine or on the host behind a container."""
+    found = shutil.which(name)
+    if found or not HOST_EXEC:
+        return found
+    try:
+        r = subprocess.run([HOST_EXEC, "sh", "-c", f"command -v {name}"], capture_output=True, text=True, timeout=TIMEOUT)
+        return r.stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def _run(cmd: list[str]) -> str:
+    if HOST_EXEC and not shutil.which(cmd[0]):
+        cmd = [HOST_EXEC, *cmd]  # not in the container: ask the host
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -78,7 +98,7 @@ def scout_system() -> list[dict]:
     import platform
     parts = []
     try:
-        rel = dict(l.split("=", 1) for l in Path("/etc/os-release").read_text().splitlines() if "=" in l)
+        rel = dict(l.split("=", 1) for l in (HOST_ROOT / "etc/os-release").read_text().splitlines() if "=" in l)
         parts.append(rel.get("PRETTY_NAME", "").strip('"'))
     except OSError:
         parts.append(f"{platform.system()} {platform.release()}")
@@ -111,8 +131,17 @@ def scout_apps() -> list[dict]:
 
 
 def scout_tools() -> list[dict]:
-    return [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": shutil.which(t), "check": {"type": "tool", "name": t}}
-            for t in DEV_TOOLS if shutil.which(t)]
+    out = []
+    for t in DEV_TOOLS:
+        where = _which(t)
+        if where:
+            out.append({"id": f"tool:{t}", "kind": "tool", "name": t, "detail": where, "check": {"type": "tool", "name": t}})
+    return out
+
+
+def scout_vms() -> list[dict]:
+    names = [n for n in _run(["virsh", "-c", "qemu:///system", "list", "--all", "--name"]).split() if n]
+    return [{"id": f"vm:{n}", "kind": "vm", "name": n, "detail": "libvirt virtual machine", "check": {"type": "vm", "name": n}} for n in names]
 
 
 SECRET_MANAGERS = {"op": "1Password CLI", "bw": "Bitwarden CLI", "pass": "pass (GPG store)", "gopass": "gopass",
@@ -121,14 +150,14 @@ SECRET_MANAGERS = {"op": "1Password CLI", "bw": "Bitwarden CLI", "pass": "pass (
 
 def scout_secrets() -> list[dict]:
     """Which password managers are here (presence only, nothing opened), so setup can say how secrets should flow."""
-    return [{"id": f"secrets:{t}", "kind": "secret-manager", "name": name, "detail": f"{t} at {shutil.which(t)}", "check": None}
-            for t, name in SECRET_MANAGERS.items() if shutil.which(t)]
+    return [{"id": f"secrets:{t}", "kind": "secret-manager", "name": name, "detail": f"{t} at {_which(t)}", "check": None}
+            for t, name in SECRET_MANAGERS.items() if _which(t)]
 
 
 def scout_containers() -> list[dict]:
     out = []
     for engine in ("docker", "podman"):
-        if not shutil.which(engine):
+        if not _which(engine):
             continue
         for line in _run([engine, "ps", "--format", "{{.Names}}\t{{.Image}}"]).splitlines():
             if "\t" in line:
@@ -140,7 +169,7 @@ def scout_containers() -> list[dict]:
 
 def scout_services() -> list[dict]:
     """Services the user added (user units, and system units outside the OS's own set)."""
-    if not shutil.which("systemctl"):
+    if not _which("systemctl"):
         return []  # macOS launchd / Windows services: shortcut: not scouted yet, add when a user on them asks
     out = []
     for scope in (["--user"], []):
@@ -184,11 +213,12 @@ def scout_ports() -> list[dict]:
 
 def scout_vpn() -> list[dict]:
     # Presence only: Lantern never runs or changes VPN tools during discovery.
-    return [{"id": f"vpn:{t}", "kind": "vpn", "name": t, "detail": shutil.which(t), "check": None}
-            for t in ("tailscale", "wg", "zerotier-cli") if shutil.which(t)]
+    return [{"id": f"vpn:{t}", "kind": "vpn", "name": t, "detail": _which(t), "check": None}
+            for t in ("tailscale", "wg", "zerotier-cli") if _which(t)]
 
 
-SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets], 3: [scout_containers, scout_services, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
+SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets],
+          3: [scout_containers, scout_vms, scout_services, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
 
 
 def discover(depth: int) -> list[dict]:
@@ -232,7 +262,9 @@ def healthy(check: dict) -> bool | None:
     if t == "path":
         return Path(check["path"]).exists()
     if t == "tool":
-        return shutil.which(check["name"]) is not None
+        return _which(check["name"]) is not None
+    if t == "vm":
+        return check["name"] in _run(["virsh", "-c", "qemu:///system", "list", "--name"]).split()
     if t == "container":
         return check["name"] in _run([check["engine"], "ps", "--format", "{{.Names}}"]).split()
     if t == "service":
@@ -246,8 +278,9 @@ PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "l
          "UniFi Network": "lantern-unifi"}
 
 
-KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "service": "services",
-               "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN", "secret-manager": "password managers"}
+KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
+               "service": "services", "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN",
+               "secret-manager": "password managers"}
 
 
 def describe(finds: list[dict]) -> str:
@@ -270,8 +303,8 @@ def summary() -> str:
     kinds: dict[str, list[str]] = {}
     for cid, c in caps.items():
         kinds.setdefault(cid.split(":", 1)[0], []).append(c["name"])
-    labels = {"system": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "service": "services",
-              "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers"}
+    labels = {"system": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
+              "service": "services", "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers"}
     parts = []
     for k, names in kinds.items():
         if k == "system":

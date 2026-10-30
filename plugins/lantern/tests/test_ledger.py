@@ -262,7 +262,7 @@ class OnboardingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
             ctx = hooks.session_start({"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("first session on this machine", ctx)
-            self.assertIn("never runs a command", ctx)
+            self.assertIn("never leaves Claude", ctx)
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertNotIn("first session on this machine", ctx)
             self.assertIn("never runs /lantern commands", ctx)
@@ -335,3 +335,52 @@ class DoctorSummaryTest(unittest.TestCase):
             names = [n for n, _, _ in doctor.run_all()]
             self.assertIn("capabilities", names)
             self.assertFalse(any(n.startswith("cap:") for n in names))
+
+
+class InsightsTest(unittest.TestCase):
+    def test_findings_about_repos_land_on_stage(self):
+        from lantern_core import discovery, insights, stage
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            dirty = Path(d) / "dirty"; dirty.mkdir()
+            subprocess.run(["git", "init", "-q", str(dirty)], check=True)
+            (dirty / "a").write_text("x")
+            clean = Path(d) / "clean"; clean.mkdir()
+            subprocess.run(["git", "init", "-q", str(clean)], check=True)
+            subprocess.run(["git", "-C", str(clean), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+            discovery.accept([{"id": f"repo:{dirty}", "kind": "repo", "name": "dirty", "detail": "", "check": {"type": "path", "path": str(dirty)}},
+                              {"id": f"repo:{clean}", "kind": "repo", "name": "clean", "detail": "", "check": {"type": "path", "path": str(clean)}}])
+            db = memory.connect()
+            with mock.patch.object(insights.discovery, "_run", return_value=""), mock.patch.object(insights, "disk", return_value=[]):
+                msgs = insights.real_run(db)
+            self.assertTrue(any("dirty has 1 uncommitted change(s) and no remote" in m for m in msgs), msgs)
+            self.assertTrue(any("clean is active but has no remote" in m for m in msgs), msgs)
+            self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
+            db.close()
+
+
+def _real_survey_start(*a, **k):
+    import importlib
+    from lantern_core import survey as sv
+    return importlib.reload(sv).start(*a, **k)
+
+
+class SurveyTest(unittest.TestCase):
+    def test_survey_starts_once_and_stores_its_brief(self):
+        from lantern_core import survey, stage
+        survey.start = _real_survey_start
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(survey.curate, "available", return_value=True):
+            spawned = []
+            with mock.patch.object(survey.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
+                self.assertTrue(survey.start())
+                self.assertFalse(survey.start())  # already running
+            self.assertEqual(spawned[0][-3:-2], ["survey"])
+            out = json.dumps({"result": "# What this machine is for\nA lab.\n# Profile\nA builder (inferred)."})
+            with mock.patch.object(survey.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=out)):
+                survey.run()
+            self.assertIn("A lab", survey.brief())
+            db = memory.connect()
+            self.assertIn("A builder", memory.profile(db, 1000))
+            self.assertIn("finished its survey", stage.top(db)[0]["message"])
+            db.close()
+            self.assertFalse(survey.start())  # done: never again
