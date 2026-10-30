@@ -36,7 +36,7 @@ A shortcut with a known limit is fine when marked in the code as `shortcut: <the
 
 ## Packs
 
-A pack is a plugin with a `skills/` folder and, optionally, a `hooks/` guard. Keep skills read-first: diagnose before changing, and stage any change for the user's approval. A guard is a `PreToolUse` hook with a tested deny list; see `plugins/lantern-tailscale/guard.py`.
+A pack is a plugin with a `skills/` folder and, optionally, a `hooks/` guard. Keep skills read-first: diagnose before changing, and stage any change for the user's approval. A guard is a `PreToolUse` hook with a tested deny or ask list; see `plugins/lantern-tailscale/guard.py` and `plugins/lantern-docker/guard.py`. `tests/test_packs.py` checks every pack's skill (read-first order, no terminal step for the user, secrets by name) and that each guard enforces what its skill text promises.
 
 ## Reporting a problem
 
