@@ -510,8 +510,8 @@ def frontiers() -> list[dict]:
         need = API_SECRETS.get(c["name"]) if cid.startswith("port:") else None
         if need and need not in held:
             out.append(frontier(cid, c["name"], "it answers locally but Lantern has no API key for it", "watching its health, queue and errors",
-                                f"ask for its API key in plain words (`lantern secret ask {need}` gives the sentence to show); "
-                                "the pasted key goes to the keychain and never reaches the model"))
+                                f"ask with the question tool how they want to give its API key (paste next, password manager, not now), "
+                                f"then `lantern secret ask {need}` gives the sentence to show; the pasted key goes to the keychain and never reaches the model"))
     return out + s.get("walls", [])
 
 
