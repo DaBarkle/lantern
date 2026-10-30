@@ -84,9 +84,28 @@ def port_closed(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
+def live_profiles() -> set[str]:
+    """Profiles of every week.py running on this machine, read from the probe folder each one was given."""
+    out = set()
+    for line in subprocess.run(["pgrep", "-af", "week.py"], capture_output=True, text=True).stdout.splitlines():
+        parts = line.split()
+        if "python" not in line or "week.py" not in line:
+            continue
+        for arg in parts[1:]:
+            f = Path(arg) / ".lantern.json"
+            if f.is_file():
+                try:
+                    out.add(json.loads(f.read_text()).get("profile", ""))
+                except (OSError, ValueError):
+                    pass
+    return out
+
+
 def sim_servers() -> list[tuple[int, bool]]:
-    """(pid, orphaned) for every memory server that serves a sim profile; orphaned means no week.py above it any more."""
+    """(pid, orphaned) for every memory server that serves a sim profile. Orphaned means no running week owns that profile
+    (uv's process handling can break the parent chain, so the profile, not the ancestry, is what decides)."""
     out = []
+    live = live_profiles()
     for pid in subprocess.run(["pgrep", "-f", "serve.py"], capture_output=True, text=True).stdout.split():
         try:
             env = Path(f"/proc/{pid}/environ").read_bytes()
@@ -94,15 +113,9 @@ def sim_servers() -> list[tuple[int, bool]]:
                 continue  # the owner's own server, or not a server at all
             if Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].endswith(b"uv"):
                 continue  # the uv wrapper around the real server process
-            p, owned = int(pid), False
-            for _ in range(3):  # uv wraps python; the week that started it should be an ancestor
-                p = int(next(l.split()[1] for l in Path(f"/proc/{p}/status").read_text().splitlines() if l.startswith("PPid:")))
-                if p <= 1:
-                    break
-                if b"week.py" in Path(f"/proc/{p}/cmdline").read_bytes():
-                    owned = True
-                    break
-            out.append((int(pid), not owned))
+            home = next(v for v in env.split(b"\0") if v.startswith(b"LANTERN_HOME=")).decode()
+            profile = Path(home).name
+            out.append((int(pid), profile not in live))
         except (OSError, ValueError, StopIteration):
             pass
     return out
