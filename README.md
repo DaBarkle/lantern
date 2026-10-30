@@ -13,7 +13,7 @@ claude plugin marketplace add github.com/DaBarkle/lantern
 claude plugin install lantern@lantern
 ```
 
-Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Your first session offers a two-minute setup (`/lantern:setup`). That is all.
+Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Say hello: the first reply already knows the machine, tells you what you may not know, and asks two questions. That is all. See [docs/first-hour.md](docs/first-hour.md).
 
 ## What you get
 
@@ -22,7 +22,8 @@ Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Yo
 | **Memory** | Every turn is kept: what you said, what Claude did, which files and commands it touched, what agents found. One SQLite file, yours. | Nothing you worked on is forgotten. |
 | **Context on every prompt** | Session start loads your profile, standing rules, how your systems are worked on, a one-line index of everything known, and where the last session in this folder left off. Each prompt brings in the few notes that match, newest state first. | No re-explaining. Claude starts informed. |
 | **Learning** | A correction ("don't restart X without asking") is a rule from that moment. Once a day, one small model call turns the day's sessions into facts, patterns and profile, replacing anything that changed. | It gets better with every task. |
-| **Discovery** | Within the depth you choose, Lantern finds your repos, tools, containers, services and local servers, remembers them and suggests the packs that add skills for them. | Your environment, known without onboarding. |
+| **Discovery and insight** | Before your first reply Lantern has looked at the machine (OS, hardware, projects with remotes and last commits, tools, password managers; wider on request: containers, VMs, services, apps, SSH hosts, local servers) and worked out what you may not know: projects with uncommitted or unbacked work, disks running short with what could be freed, failed units with the telling log line, services down, secrets sitting in unit files (by name). Findings are re-checked at every session start. | It tells you things about your own machine. |
+| **Survey** | Once, a read-only background agent reads the machine's own files and writes a brief: what the machine is for, how it is set up (service map), what is worth knowing, what Lantern should take on, who you are. Progress shows on every turn; the brief arrives in the conversation the moment it is done. | Real understanding, a few minutes in. |
 | **Stage** | Open findings in one place: the doctor's, uncommitted work left in a project, new things found. Each fades and expires on its own. | You hear about what matters, once. |
 | **Doctor** | Daily, and on demand: recall rate, memory freshness, hook latency, secret shield, each accepted capability. It repairs what it safely can. | You do not wonder whether it is working. |
 | **Shield** | Raw secrets never enter a command, a file, a note or the model. Hand one over in chat as `secret NAME: value`: Lantern stores it in the OS keychain and stops that message before the model sees it. Commands get it as an environment variable; 1Password items can be linked and read only at run time. | Nothing leaks, and you never leave the conversation. |
@@ -35,7 +36,7 @@ No model call ever sits on the prompt path. A prompt costs Lantern about 50 mill
 
 | Command | What it does |
 | --- | --- |
-| `/lantern:setup` | Two-minute conversational setup, offered in the first session |
+| `/lantern:setup` | Revisit the setup choices (it happens by itself in the first session) |
 | `/lantern:status` | Is it working? One plain line, and the fix if not |
 | `/lantern:profile` | Everything Lantern believes about you and your rules |
 | `/lantern:recall <topic>` | What memory holds on a topic |
