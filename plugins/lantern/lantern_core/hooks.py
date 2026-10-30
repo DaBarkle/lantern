@@ -171,6 +171,7 @@ def session_start(payload: dict) -> dict | None:
         tail = memory.last_session(db, session, RESUME_HOURS * 3600)
         learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
         no_rules = not memory.rules(db, 2000)
+        memory_rules_count = len(memory.rules(db, 20000))
         watches = insights.watch_summary(db)
         open_block = insights.open_block(db)
         found_new = insights.discovered_since_last(db)
@@ -259,8 +260,11 @@ def session_start(payload: dict) -> dict | None:
     lines += ["", f"Now: {time.strftime('%Y-%m-%d %H:%M %Z')}."]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS))]
     if tail_block and not first:
+        stored = memory_rules_count
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
                   "these lines, using their counts and reasons word for word, then answer):"] + tail_block
+        lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
+                  "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
         if previous and previous.get("loops"):
             lines += ["Open loops from the last session, each to be done now, re-asked once, or retired with a reason: "
                       + "; ".join(previous["loops"])]

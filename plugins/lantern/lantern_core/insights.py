@@ -120,7 +120,9 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
             boiler = ("Started ", "Starting ", "Stopped ", "Stopping ", "Consumed ", "Scheduled restart", "Failed with result", "Main process exited")
             telling = [l for l in log if not l.startswith(boiler) and not l.startswith(unit)][-3:]
             exits = [l for l in log if "code=" in l or "status=" in l]
-            cause = (f"; last lines: " + " | ".join(t[:120] for t in telling) if telling else "") + (f"; {exits[-1][:120]}" if exits else "")
+            cause = (f"; journal, already read by Lantern: " + " | ".join(t[:120] for t in telling) if telling else "") + (f"; {exits[-1][:120]}" if exits else "")
+            if not telling and not exits:
+                cause = "; the journal has no lines for it (the unit may have been created transiently or logs are rotated)"
             show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
             when = show.get("InactiveEnterTimestamp", "")
             detail = f" (result {show.get('Result', '?')}, exit status {show.get('ExecMainStatus', '?')}, at {when})" if show else ""
