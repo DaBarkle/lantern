@@ -66,13 +66,15 @@ def top(db: sqlite3.Connection, k: int = TOP, now: float | None = None) -> list[
     return out[:k]
 
 
-def render(entries: list[dict]) -> str:
-    return "\n".join(f"- [{e['source']}] {e['message']}" for e in entries)
+def render(entries: list[dict], total: int | None = None) -> str:
+    head = [f"({total} open; the {len(entries)} most pressing shown)"] if total and total > len(entries) else []
+    return "\n".join(head + [f"- [{e['source']}] {e['message']}" for e in entries])
 
 
 def delta(db: sqlite3.Connection, session: str, now: float | None = None) -> str | None:
     """The top entries if they changed since this session last saw them, else None."""
     entries = top(db, now=now)
+    total = db.execute("SELECT count(*) FROM stage").fetchone()[0]
     digest = hashlib.sha256("|".join(e["key"] + e["message"] for e in entries).encode()).hexdigest()[:16]
     row = db.execute("SELECT digest FROM stage_seen WHERE session=?", (session,)).fetchone()
     if row and row[0] == digest:
@@ -81,4 +83,4 @@ def delta(db: sqlite3.Connection, session: str, now: float | None = None) -> str
         db.execute("INSERT OR REPLACE INTO stage_seen VALUES (?, ?, ?)", (session, digest, now or time.time()))
     if row is None and not entries:
         return None  # nothing on Stage and nothing was shown before
-    return render(entries) if entries else "Stage is now clear."
+    return render(entries, total) if entries else "Stage is now clear."
