@@ -8,7 +8,7 @@ Thanks for helping. Lantern is small on purpose; please keep it that way.
 - **Deterministic where possible.** Capture, ledger, recall, discovery and the doctor are plain code with tests. One small model call a day does the curation.
 - **The user never tinkers.** A feature that needs a setting, a command or a manual step as its normal path is not finished. Prefer self-repair to a report.
 - **Nothing hard-wired.** No paths, hosts or service names from one machine in core. Machine-specific knowledge goes in memory or in a pack.
-- **Consent boundaries hold.** Discovery stays within the depth the user chose. Guards (like the Tailscale pack's) fail closed.
+- **Consent boundaries hold.** Discovery is read-only and the user can narrow it ("look less"); nothing that changes the machine runs without the user. Guards (like the Tailscale pack's) fail closed.
 - **Secrets never enter memory, commands or notes.** The shield is built in, not configured.
 
 ## Layout
