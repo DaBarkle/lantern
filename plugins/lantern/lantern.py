@@ -6,6 +6,7 @@
 import hashlib
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -16,6 +17,7 @@ USAGE = """usage: lantern.py hook <name>
        lantern.py doctor
        lantern.py stage list | note <message> [--key K] [--score 1-10] [--days N] | resolve <key>
        lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME
+       lantern.py remember <text> | forget <query> | forget --id N | recall <query> | profile
        lantern.py approve setup | "<question>" [--timeout SECONDS]
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
        lantern.py job curate | doctor          (what the nightly schedule runs)
@@ -36,6 +38,37 @@ def stage_cli(argv: list[str]) -> int:
             return 0
         if argv[:1] == ["resolve"] and len(argv) == 2:
             return 0 if stage.resolve(db, argv[1]) else 1
+    finally:
+        db.close()
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+def memory_cli(argv: list[str]) -> int:
+    db = memory.connect()
+    try:
+        if argv[:1] == ["remember"] and len(argv) >= 2:
+            text = " ".join(argv[1:])
+            if shield.find(text):
+                print("that looks like a secret; Lantern will not store it (use `lantern secret set`)", file=sys.stderr)
+                return 1
+            memory.add(db, "fact", "manual", text)
+            print("remembered")
+            return 0
+        if argv[:2] == ["forget", "--id"] and len(argv) == 3:
+            memory.supersede(db, int(argv[2]))
+            print(f"forgot #{argv[2]}")
+            return 0
+        if argv[:1] in (["forget"], ["recall"]) and len(argv) >= 2:
+            for h in memory.search(db, " ".join(argv[1:]), limit=8):
+                print(f"#{h['id']:<7} [{h['kind']}, {time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'][:300]!s}")
+            if argv[0] == "forget":
+                print("\nDrop one with `lantern forget --id N`.")
+            return 0
+        if argv == ["profile"]:
+            print("Profile:\n" + (memory.profile(db, 6000) or "(nothing yet)"))
+            print("\nRules:\n" + "\n".join(f"#{i} {t}" for i, t in memory.rule_items(db) )[:12000])
+            return 0
     finally:
         db.close()
     print(USAGE, file=sys.stderr)
@@ -75,6 +108,8 @@ def main(argv: list[str]) -> int:
             for p in plans:
                 schedule.apply(p)
         return 0
+    if argv[:1] in (["remember"], ["forget"], ["recall"], ["profile"]):
+        return memory_cli(argv)
     if argv[:1] == ["approve"]:
         return approvals.cli(argv[1:])
     print(USAGE, file=sys.stderr)

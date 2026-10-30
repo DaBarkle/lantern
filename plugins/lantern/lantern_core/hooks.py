@@ -1,6 +1,8 @@
 """Claude Code hook entry points. Each reads the event JSON on stdin and may print a JSON reply."""
 import json
 import math
+import re
+import subprocess
 import sys
 import time
 
@@ -9,7 +11,7 @@ from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
 RECALL_LIMIT = 3
-CAPTURE_CHARS = 2000
+CAPTURE_CHARS = 1200  # per half: a pasted log must not crowd out the reply
 SEMANTIC_FLOOR = 0.45  # MiniLM cosine for an item to be a candidate
 SEMANTIC_GATE = 0.5  # best cosine below this = memory has nothing on the topic (eval: absent facts top out at 0.41)
 KEYWORD_SHARE = 0.5
@@ -20,6 +22,12 @@ INDEX_CHARS = 16000  # one line per curated note, so a session knows what memory
 TOP_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = 48
+PROJECT_RESUME_DAYS = 14  # a session in the same folder is worth showing for longer than one anywhere
+AGENT_CHARS = 1500
+SHORT_PROMPT_TERMS = 8  # below this, the session's own names join the recall query
+# A correction holds from the moment it is said, not from tomorrow's curation.
+CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|stop|from now on|in future|i(?:'ve| have)? told you|i said|"
+                        r"i asked you|remember(?: that| to)?|make sure(?: you)?|you (?:should|must|need to))\b", re.I)
 KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 CURATED = {"fact", "rule", "doc"}
 CURATED_MIN_TERMS = 9
@@ -47,9 +55,17 @@ def session_start(payload: dict) -> dict | None:
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact")
         session = payload.get("session_id", "?")
-        previous = memory.last_session(db, session, RESUME_HOURS * 3600)
+        cwd = payload.get("cwd") or ""
+        previous = memory.ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd) if cwd else None
+        if previous and previous["cwd"] != cwd and time.time() - previous["updated"] > RESUME_HOURS * 3600:
+            previous = None  # another folder's session only counts while it is fresh
+        if not previous:
+            previous = memory.ledger_last(db, session, RESUME_HOURS * 3600)
+        tail = memory.last_session(db, session, RESUME_HOURS * 3600)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
+        own_ledger = memory.ledger_get(db, session) if own else None
+        git_state(db, cwd)
         attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
@@ -68,9 +84,17 @@ def session_start(payload: dict) -> dict | None:
     if own:
         lines += ["", "This session's working memory (from before the compaction):",
                   f"- Started with: {own[0][:400]}",
-                  f"- Names in play: {', '.join(memory.identifiers(own))}"] + [f"- Recent: {t[:500]}" for t in own[-3:]]
+                  f"- Names in play: {', '.join(memory.identifiers(own))}"]
+        lines += memory.ledger_lines(own_ledger)[2:] if own_ledger else []
+        lines += [f"- Recent: {t[:500]}" for t in own[-3:]]
     elif previous:
-        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in previous]
+        where = "in this folder" if previous["cwd"] == cwd else f"in {previous['cwd']}"
+        lines += ["", f"Where the user's last session {where} left off ({time.strftime('%Y-%m-%d', time.localtime(previous['updated']))}):"]
+        lines += memory.ledger_lines(previous)
+        if tail:
+            lines += [f"- Last exchange: {tail[-1]['text'][:600]}"]
+    elif tail:
+        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first):", attention]
     return _context("SessionStart", "\n".join(lines))
@@ -80,13 +104,19 @@ def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
+    session = payload.get("session_id", "?")
     # The previous message carries the topic for short follow-ups ("are they all direct?").
     query = prompt + "\n" + transcript.previous_user(payload.get("transcript_path", ""))
     want = set(memory.terms(query))
+    noted = None
     # A keyword hit must share most of the query's words; common words alone ("operator", "server") match everything.
     need = max(2, math.ceil(KEYWORD_SHARE * len(want))) if len(want) > 1 else 1
     db = memory.connect()
     try:
+        if len(want) < SHORT_PROMPT_TERMS:  # "is it still failing?": the session's own names say what "it" is
+            query += "\n" + " ".join(memory.identifiers(memory.session_turns(db, session), limit=10))
+            want = set(memory.terms(query))
+        noted = note_correction(db, session, prompt)
         kw_hits = [h for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
         keyword = [h["id"] for h in kw_hits]
@@ -117,7 +147,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
     hits, seen = [], set()
     for i in order:
         h = rows.get(i)
-        if not h or h["source"] == payload.get("session_id") or len(h["text"]) < MIN_CHARS:
+        if not h or h["source"] in (session, f"said:{session}") or len(h["text"]) < MIN_CHARS:
             continue
         if h["text"][:200] in seen:  # the same note stored twice
             continue
@@ -141,24 +171,83 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       for h in titles]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
-    return _context("UserPromptSubmit", "\n".join(lines)) if lines else None
+    if noted:
+        lines += ["Lantern stored this message as a standing rule for future sessions (the user can drop it with /lantern:forget)."]
+    reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
+    if noted:
+        reply["systemMessage"] = "Lantern noted a standing rule from your message. /lantern:forget removes it."
+    return reply or None
+
+
+def note_correction(db, session: str, prompt: str) -> int | None:
+    """A correction ("don't X", "always Y") becomes a rule at once; curation merges or rewrites it tonight."""
+    text = prompt.strip()
+    if not (15 <= len(text) <= 400) or "?" in text or not CORRECTION.match(text) or shield.find(text):
+        return None
+    words = set(memory.terms(text))
+    for _, line in memory.rule_items(db):
+        if len(words & set(memory.terms(line))) >= 0.7 * max(1, len(words)):
+            return None  # already a rule
+    return memory.add(db, "rule", f"said:{session}", text)
 
 
 def stop(payload: dict) -> dict | None:
-    user, reply = transcript.last_exchange(payload.get("transcript_path", ""))
-    if not user or _is_system(user):
+    turn = transcript.last_turn(payload.get("transcript_path", ""))
+    if not turn["user"] or _is_system(turn["user"]):
         return None
-    text = f"User: {user}\nAssistant: {reply}"[:CAPTURE_CHARS]
+    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {turn['reply'][:CAPTURE_CHARS]}"
+    acts = [f"edited {', '.join(turn['files'][-6:])}" if turn["files"] else "",
+            f"ran {'; '.join(turn['commands'][-4:])}" if turn["commands"] else "",
+            f"{turn['failed']} tool call(s) failed" if turn["failed"] else ""]
+    if any(acts):
+        text += "\nActions: " + "; ".join(a for a in acts if a)
     db = memory.connect()
     try:
-        memory.add(db, "turn", payload.get("session_id", "?"), text)
+        memory.add(db, "turn", payload.get("session_id", "?"), shield.redact(text))
+        memory.ledger_update(db, payload.get("session_id", "?"), payload.get("cwd") or "", turn)
     finally:
         db.close()
     return None
 
 
+def subagent_stop(payload: dict) -> dict | None:
+    """What an agent found is worth as much as what the main session said: keep its final text."""
+    path = payload.get("agent_transcript_path") or ""
+    msgs = transcript.messages(path)
+    reply = next((t for r, t in reversed(msgs) if r == "assistant"), "")
+    if not reply.strip():
+        return None
+    db = memory.connect()
+    try:
+        memory.add(db, "turn", payload.get("session_id", "?"), shield.redact("Agent result: " + reply[:AGENT_CHARS]))
+    finally:
+        db.close()
+    return None
+
+
+def git_state(db, cwd: str) -> None:
+    """Uncommitted or unpushed work left in this folder goes on Stage; a clean tree takes it off again."""
+    key = f"git/{cwd}"
+    if not cwd:
+        return
+    try:
+        status = subprocess.run(["git", "-C", cwd, "status", "--porcelain", "--branch"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if status.returncode:
+        return  # not a repository
+    lines = status.stdout.splitlines()
+    dirty = len(lines) - 1
+    ahead = re.search(r"ahead (\d+)", lines[0]) if lines else None
+    parts = [f"{dirty} uncommitted change(s)" if dirty else "", f"{ahead.group(1)} unpushed commit(s)" if ahead else ""]
+    if any(parts):
+        stage.publish(db, key, "git", f"{cwd}: " + ", ".join(p for p in parts if p), score=4, days=3)
+    else:
+        stage.resolve(db, key)
+
+
 HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop,
-            "pre-tool-use": shield.pre_tool_use}
+            "subagent-stop": subagent_stop, "pre-tool-use": shield.pre_tool_use}
 
 
 def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
@@ -170,7 +259,10 @@ def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
         payload = json.loads(stdin.read() or "{}")
     except json.JSONDecodeError:
         payload = {}
+    t0 = time.monotonic()
     reply = handler(payload)
+    if name != "pre-tool-use":  # every prompt-path hook reports how long it took; the doctor watches the trend
+        _log("hooks", {"hook": name, "ms": round((time.monotonic() - t0) * 1000)})
     if reply:
         stdout.write(json.dumps(reply))
     return 0

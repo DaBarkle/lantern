@@ -75,8 +75,25 @@ def check_shield():
     return OK, "shield catches test secrets"
 
 
+HOOK_P90_MS = 500
+
+
+def check_hook_latency():
+    try:
+        lines = (ensure_data_dir() / "hooks.jsonl").read_text().splitlines()[-200:]
+    except OSError:
+        return OK, "hook latency: nothing measured yet"
+    ms = sorted(json.loads(l)["ms"] for l in lines if l.strip())
+    if len(ms) < 20:
+        return OK, f"hook latency: too few calls yet ({len(ms)})"
+    p90 = ms[int(len(ms) * 0.9) - 1]
+    if p90 > HOOK_P90_MS:
+        return WARN, f"hooks are slow: 9 in 10 finish within {p90} ms (budget {HOOK_P90_MS} ms)"
+    return OK, f"hooks: 9 in 10 finish within {p90} ms"
+
+
 CHECKS = {"data-dir": check_data_dir, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
-          "recall-rate": check_recall_rate, "shield": check_shield}
+          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency}
 
 
 def run_all() -> list[tuple[str, str, str]]:

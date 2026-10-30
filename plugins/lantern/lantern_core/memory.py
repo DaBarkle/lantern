@@ -1,4 +1,5 @@
 """Memory store: one SQLite file with full-text search, ranked by relevance and gently by age."""
+import json
 import math
 import re
 import sqlite3
@@ -21,6 +22,13 @@ CREATE TABLE IF NOT EXISTS items (
   created REAL NOT NULL,       -- unix seconds
   status TEXT NOT NULL DEFAULT 'active',  -- active | superseded
   vec BLOB                     -- float32 embedding, filled by the memory server
+);
+CREATE TABLE IF NOT EXISTS ledger (
+  session TEXT PRIMARY KEY,
+  cwd TEXT NOT NULL,
+  started REAL NOT NULL,
+  updated REAL NOT NULL,
+  data TEXT NOT NULL             -- JSON: goal, last, files, commands, agents, failed, turns
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(text, content='items', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
@@ -130,6 +138,60 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule") -> list[st
             continue
         out.append(line)
         used += len(line)
+    return out
+
+
+def rule_items(db: sqlite3.Connection) -> list[tuple[int, str]]:
+    """(id, summary line) of every active rule and fact, newest first."""
+    rows = db.execute("SELECT id, text FROM items WHERE kind IN ('rule', 'fact') AND status='active' ORDER BY created DESC")
+    return [(i, t.strip().splitlines()[0][:300]) for i, t in rows if t.strip()]
+
+
+LEDGER_KEEP = 20
+
+
+def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, now: float | None = None) -> dict:
+    """Fold one turn (from transcript.last_turn) into the session's ledger: what it set out to do, what it touched."""
+    now = now or time.time()
+    row = db.execute("SELECT data, started FROM ledger WHERE session=?", (session,)).fetchone()
+    d = json.loads(row[0]) if row else {"goal": turn["user"][:400], "files": [], "commands": [], "agents": [], "failed": 0, "turns": 0}
+    for k in ("files", "commands", "agents"):
+        d[k] = list(dict.fromkeys(d[k] + turn.get(k, [])))[-LEDGER_KEEP:]
+    d["failed"] += turn.get("failed", 0)
+    d["turns"] += 1
+    d["last"] = turn["user"][:400]
+    with db:
+        db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
+                   "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
+    return d
+
+
+def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
+    row = db.execute("SELECT cwd, started, updated, data FROM ledger WHERE session=?", (session,)).fetchone()
+    return {"cwd": row[0], "started": row[1], "updated": row[2], **json.loads(row[3])} if row else None
+
+
+def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str | None = None) -> dict | None:
+    """The most recent other session's ledger, preferring one in the same folder, if it ended within within_s."""
+    cut = time.time() - within_s
+    for where, args in ((("AND cwd=?", (exclude, cut, cwd)),) if cwd else ()) + (("", (exclude, cut)),):
+        row = db.execute(f"SELECT session FROM ledger WHERE session != ? AND updated > ? {where} ORDER BY updated DESC LIMIT 1",
+                         args).fetchone()
+        if row:
+            return ledger_get(db, row[0])
+    return None
+
+
+def ledger_lines(d: dict) -> list[str]:
+    out = [f"- Goal: {d['goal']}", f"- Last asked: {d['last']}"]
+    if d["files"]:
+        out.append("- Files edited: " + ", ".join(d["files"]))
+    if d["commands"]:
+        out.append("- Commands run: " + "; ".join(f"`{c}`" for c in d["commands"][-8:]))
+    if d["agents"]:
+        out.append("- Agents used: " + "; ".join(d["agents"]))
+    if d["failed"]:
+        out.append(f"- Tool calls that failed: {d['failed']}")
     return out
 
 

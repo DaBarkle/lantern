@@ -17,13 +17,15 @@ MODEL = "haiku"
 MAX_CHARS = 60000  # about a day of turns; older turns were curated by earlier runs
 SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
     "type": "object", "required": ["kind", "summary", "detail"], "properties": {
-        "kind": {"enum": ["rule", "fact"]}, "summary": {"type": "string"}, "detail": {"type": "string"}}}}}}
+        "kind": {"enum": ["rule", "fact", "profile"]}, "summary": {"type": "string"}, "detail": {"type": "string"}}}}}}
 PROMPT = """Below are recent exchanges between a user and their coding and operations assistant. List only what
 should still hold in future sessions:
 - rule: something the user asked for or corrected that should change how the assistant works from now on
   ("never restart X without asking", "keep replies short", "don't use hacky workarounds")
 - fact: a durable fact about the user's machines, services, accounts, people or projects
   ("Plex runs as container-plex.service", "Paperclip was shut down on purpose on Oct 27")
+- profile: something about who the user is and how they like to work (role, skills, habits, what they care about)
+If an exchange shows that a KNOWN item is now wrong or has changed, return the corrected item: it replaces the old one.
 Not: one-off task steps, things already done and finished, guesses, or anything secret (passwords, tokens, keys).
 summary: one self-contained sentence a future session can act on. detail: why, in a sentence or two.
 Return an empty list if nothing qualifies.
@@ -70,20 +72,25 @@ def run(now: float | None = None, ask=_ask) -> int:
             state_path.write_text(json.dumps({"until": now}))
             return 0
         text = "\n\n---\n\n".join(turns)[-MAX_CHARS:]
-        known = memory.rules(db, 6000) + memory.rules(db, 6000, kind="fact")
-        items = ask(PROMPT.format(known="\n".join(f"- {k}" for k in known) or "(nothing yet)", turns=text))
+        known = memory.rule_items(db)[:200] + [(i, t[:300]) for i, t in db.execute(
+            "SELECT id, text FROM items WHERE kind='profile' AND status='active' ORDER BY created DESC LIMIT 20")]
+        items = ask(PROMPT.format(known="\n".join(f"- {k}" for _, k in known) or "(nothing yet)", turns=text))
         added = 0
         for it in items:
             summary = re.sub(r"\s+", " ", it["summary"]).strip()
             if not summary or find(summary + it["detail"]):
                 continue  # never store anything that looks like a secret
-            # A near-copy of something already known (most of its words) would only add noise.
             w = _words(summary)
-            if any(len(w & _words(k)) >= 0.7 * max(1, len(w)) for k in known):
-                continue
+            same = [(i, k) for i, k in known if len(w & _words(k)) >= 0.7 * max(1, len(w))]
+            if any(k.lower() == summary.lower() for _, k in same):
+                continue  # already known, word for word
+            for i, k in same:  # a near-copy is the same subject restated: the newer wording wins
+                if i is not None:
+                    memory.supersede(db, i)
+            known = [(i, k) for i, k in known if (i, k) not in same]
             memory.add(db, it["kind"], f"curate:{time.strftime('%Y-%m-%d', time.localtime(now))}:{added}",
                        f"{summary}\n\n{it['detail'].strip()}", created=now)
-            known.append(summary)
+            known.append((None, summary))
             added += 1
     finally:
         db.close()
