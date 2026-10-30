@@ -148,3 +148,17 @@ class PlatformTest(unittest.TestCase):
             self.assertTrue(discovery.healthy(services[0]["check"]))
         with mock.patch.object(discovery, "PLATFORM", "windows"), mock.patch.object(discovery, "_run", lambda cmd: ""):
             self.assertEqual(discovery.scout_services() + discovery.scout_timers() + discovery.scout_apps(), [])  # nothing answered
+
+
+class SettleSetupTest(unittest.TestCase):
+    def test_answers_given_through_the_question_tool_settle_the_pending_setup(self):
+        import lantern
+        from lantern_core import discovery
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            discovery.save_settings({"depth": 2, "pending": ["purpose", "guardrails", "wider"]})
+            self.assertEqual(lantern.memory_cli(["remember", "--profile", "a home server and gaming PC"]), 0)
+            self.assertEqual(lantern.memory_cli(["remember", "--rule", "ask before restarting anything"]), 0)
+            self.assertEqual(discovery.settings()["pending"], ["wider"])
+            lantern.settle_setup("wider")
+            self.assertEqual(discovery.settings()["pending"], [])
+            self.assertIn("answered_at", discovery.settings())

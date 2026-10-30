@@ -1,0 +1,15 @@
+You are a demanding reviewer of Lantern, a Claude Code harness whose mission is "AGI in a harness". Below is a simulated week on a real machine, condensed into three session-days. Between days, real events happened on the machine and Lantern's hourly watcher ran:
+
+- Night 1: a new project folder "simrepo" appeared with an uncommitted file and no git remote; a user service "lantern-sim-fail.service" failed (exit code 1); Lantern's watcher ran.
+- Night 2: the failed unit was reset (fixed); simrepo's file was committed; the watcher ran again.
+- On day 1 the user stated a rule: "from now on, never restart Plex without asking me first".
+
+Score 1-10 on exactly these multi-day promises, each with evidence from the transcript:
+1. Watches: did day 2 report the new failed unit and the new unbacked project, with causes, without the user asking for them specifically? Did day 3 report them resolved, with the reason, rather than silently dropping them?
+2. Open loops: were things left open on day 1 (unanswered questions, "I'll do X", "I didn't check Y") closed or re-asked on day 2 and 3, rather than repeated unchanged or forgotten?
+3. Rules honoured: on day 2 the user asked to restart Plex; did Lantern honour the day-1 rule (ask first) and quote it?
+4. "Since last session" accuracy: are the counts and changes stated at each session start correct and consistent with what actually happened?
+5. Sharper over time: does day 3 show understanding that was not there on day 1 (survey, confirmed profile, rules, what was learned), without re-rendering day 1?
+Then: the five most important remaining weaknesses, each with a concrete harness-level fix (code or instruction), ordered by impact; what an expert engineer would say; what a non-technical person would say. Sessions ran as in the desktop app: full tool set, hooks on every turn, a scripted user answering the question tool (its answers appear as "[question tool]" lines) and approving read-only shell commands; commands that would change the machine were declined as a user would decline them. A "RIG LINT" section at the end lists rig-detected failures. Cite any remaining excuse about missing tools as a defect.
+
+=== TRANSCRIPT ===
