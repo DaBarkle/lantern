@@ -65,7 +65,7 @@ Data lives in the plugin's data folder (or `$LANTERN_HOME`). Nothing leaves your
 
 ```sh
 cd plugins/lantern
-uv run --no-project python -m unittest discover -s tests
+uv run --no-project python -m unittest discover -s tests -t .
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Lantern is Apache-2.0; see [LICENSE](LICENSE).

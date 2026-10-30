@@ -27,19 +27,22 @@ def check_data_dir():
     return OK, f"data folder {d}"
 
 
+def start_server() -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    kw["creationflags" if sys.platform == "win32" else "start_new_session"] = 0x00000208 if sys.platform == "win32" else True
+    subprocess.Popen(["uv", "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],
+                     env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())}, **kw)
+
+
 def check_semantic():
     if semantic.search(ensure_data_dir(), "doctor") is None:
         if not resources.can_spawn():
             return WARN, "memory server is down and the machine is short of memory, so it was not started; recall is keyword-only"
-        # Repair rather than report: start the server detached, as the plugin monitor would at the next session.
-        import subprocess
-        import sys
-        from pathlib import Path
-        kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-        kw["creationflags" if sys.platform == "win32" else "start_new_session"] = 0x00000208 if sys.platform == "win32" else True
         try:
-            subprocess.Popen(["uv", "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],
-                             env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())}, **kw)
+            start_server()  # repair rather than report, as the plugin monitor would at the next session
         except OSError as e:
             return WARN, f"memory server was down and could not be started ({e}); recall is keyword-only"
         return OK, "memory server was down; started it (recall is keyword-only until it is warm)"

@@ -29,7 +29,7 @@ plugins/lantern-*/          packs: skills, optional guards
 1. Read the module you are changing and its test. Every behaviour has one.
 2. Make the smallest change that fully works. Delete before you add.
 3. Add or extend one test that fails without your change.
-4. Run the tests: `cd plugins/lantern && uv run --no-project python -m unittest discover -s tests`.
+4. Run the tests: `cd plugins/lantern && uv run --no-project python -m unittest discover -s tests -t .`.
 5. Write a commit message that says what changed for the user and why.
 
 A shortcut with a known limit is fine when marked in the code as `shortcut: <the limit>, <when to upgrade>`.

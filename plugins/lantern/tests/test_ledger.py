@@ -173,6 +173,12 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _real_start(*a, **k):
+    import importlib
+    from lantern_core import jobs as j
+    return importlib.reload(j).start(*a, **k)
+
+
 class JobsTest(unittest.TestCase):
     def test_due_jobs_start_once_a_day_from_session_start(self):
         from lantern_core import jobs
@@ -180,7 +186,8 @@ class JobsTest(unittest.TestCase):
                 mock.patch.object(jobs.curate, "available", return_value=True):
             self.assertEqual(jobs.due(), ["curate", "doctor", "discover"])
             spawned = []
-            with mock.patch.object(jobs.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
+            with mock.patch.object(jobs.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)), \
+                    mock.patch.object(hooks.jobs, "start", jobs.start.__wrapped__ if hasattr(jobs.start, "__wrapped__") else _real_start):
                 hooks.session_start({"session_id": "s1", "source": "startup"})
                 hooks.session_start({"session_id": "s2", "source": "startup"})  # already started: not again
             self.assertEqual([c[-3] for c in spawned], ["curate", "doctor", "discover"])
@@ -191,12 +198,19 @@ class JobsTest(unittest.TestCase):
             self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor", "discover"])
 
 
+def _real_doctor_start():
+    import importlib
+    from lantern_core import doctor as d
+    return importlib.reload(d).start_server()
+
+
 class DoctorRepairTest(unittest.TestCase):
     def test_memory_server_down_is_started_not_reported(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
                 mock.patch.object(doctor.semantic, "search", return_value=None):
             spawned = []
-            with mock.patch("subprocess.Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
+            with mock.patch("subprocess.Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)), \
+                    mock.patch.object(doctor, "start_server", doctor.start_server.__wrapped__ if hasattr(doctor.start_server, "__wrapped__") else _real_doctor_start):
                 status, msg = doctor.check_semantic()
             self.assertEqual(status, doctor.OK)
             self.assertIn("started", msg)
