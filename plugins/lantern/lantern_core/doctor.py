@@ -27,10 +27,22 @@ def check_data_dir():
     return OK, f"data folder {d}"
 
 
+START_EVERY = 300  # seconds between start attempts: a server that cannot come up (no memory) is not retried on every prompt
+
+
 def start_server() -> None:
+    """Start the memory server detached, at most once per START_EVERY; it exits by itself if one is already up."""
     import subprocess
     import sys
+    import time
     from pathlib import Path
+    marker = ensure_data_dir() / "serve.started"
+    try:
+        if time.time() - marker.stat().st_mtime < START_EVERY:
+            return
+    except OSError:
+        pass
+    marker.touch()
     kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     kw["creationflags" if sys.platform == "win32" else "start_new_session"] = 0x00000208 if sys.platform == "win32" else True
     subprocess.Popen(["uv", "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],

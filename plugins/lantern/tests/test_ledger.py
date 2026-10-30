@@ -205,9 +205,21 @@ class DoctorRepairTest(unittest.TestCase):
             with mock.patch("subprocess.Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)), \
                     mock.patch.object(doctor, "start_server", doctor.real_start_server):
                 status, msg = doctor.check_semantic()
-            self.assertEqual(status, doctor.OK)
-            self.assertIn("started", msg)
-            self.assertTrue(spawned[0][-1].endswith("serve.py"))
+                self.assertEqual(status, doctor.OK)
+                self.assertIn("started", msg)
+                self.assertTrue(spawned[0][-1].endswith("serve.py"))
+                doctor.real_start_server()
+                self.assertEqual(len(spawned), 1)  # a second start within START_EVERY is skipped: a server that cannot come up is not retried per prompt
+                os.utime(Path(d) / "serve.started", (0, 0))
+                doctor.real_start_server()
+                self.assertEqual(len(spawned), 2)
+
+    def test_a_prompt_that_finds_the_server_down_starts_it(self):
+        from lantern_core import hooks
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(hooks.semantic, "search", return_value=None), mock.patch.object(doctor, "start_server") as start:
+            hooks.user_prompt_submit({"session_id": "s", "prompt": "what did we decide about the backup schedule last week"})
+            self.assertEqual(start.call_count, 1)
 
 
 class AutoDiscoveryTest(unittest.TestCase):

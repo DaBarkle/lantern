@@ -58,7 +58,7 @@ Lantern is four Claude Code hooks and one background process.
 - `UserPromptSubmit` runs recall: full-text search and semantic search fused by rank, weighted by kind and recency, gated so a prompt with nothing in memory gets nothing. A correction becomes a rule here.
 - `Stop` and `SubagentStop` capture the turn, the tools it used and what agents found, into memory and the session ledger.
 - `PreToolUse` is the shield.
-- A memory server keeps the embedding model warm on localhost, token-protected, one per data folder.
+- A memory server keeps the embedding model warm on localhost, token-protected, one per data folder. It exits after half an hour without a search and comes back on the next session or prompt.
 
 Data lives in the plugin's data folder (or `$LANTERN_HOME`). A folder can keep its own memory apart from the rest: put `{"profile": "work"}` in a `.lantern.json` there (or in a parent), and sessions in it get their own profile, rules, discovery and Stage. Nothing leaves your machine except the one daily curation call to Claude and, if you enable it, approval questions to ntfy.
 

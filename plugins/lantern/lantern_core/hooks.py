@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, discovery, insights, jobs, memory, semantic, shield, stage, survey, transcript
+from . import __version__, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -157,6 +157,8 @@ def session_start(payload: dict) -> dict | None:
             db0.close()
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
+    if resources.can_spawn():
+        doctor.start_server()  # idle servers exit; each session brings one back (a no-op while one is up)
     if payload.get("source") not in ("compact", "resume"):
         capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
@@ -383,6 +385,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
                    if len(want & set(memory.terms(h["text"]))) >= need]
         keyword = [h["id"] for h in kw_hits]
         found = semantic.search(ensure_data_dir(), query)
+        if found is None and resources.can_spawn():
+            doctor.start_server()  # keyword-only this turn; warm again in a few seconds
         meaning = [i for i, cos in found or [] if cos >= SEMANTIC_FLOOR]
         if found is not None:
             # With the server up, its best cosine decides whether memory has anything on this at all, and keyword-only

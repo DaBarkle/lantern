@@ -4,8 +4,9 @@
 # ///
 """Lantern memory server: keeps the embedding model warm so per-prompt semantic search takes milliseconds.
 
-Started by the plugin monitor in every session; only the first one binds the port, the rest exit.
-Listens on 127.0.0.1 only and answers only requests carrying the token from the user's data folder.
+Started on demand (session start, a prompt that found it down, the daily doctor); only the first one binds the port,
+the rest exit. Exits by itself after half an hour without a search, so a machine with no session running carries no
+resident model. Listens on 127.0.0.1 only and answers only requests carrying the token from the user's data folder.
 """
 import json
 import secrets
@@ -23,6 +24,7 @@ from lantern_core.paths import ensure_data_dir  # noqa: E402
 
 SYNC_SECONDS = 10
 EMBED_BATCH = 64
+IDLE_SECONDS = 1800  # no search for this long: free the memory; the next session or prompt starts a server again
 
 
 def normalise(v):
@@ -73,13 +75,14 @@ class Index:
             return [[int(self.ids[i]), float(sims[i])] for i in top]
 
 
-def handle(conn, index, token):
+def handle(conn, index, token, used):
     with conn:
         conn.settimeout(5)
         req = json.loads(conn.makefile("r", encoding="utf-8").readline() or "{}")
         if not secrets.compare_digest(str(req.get("token", "")), token):
             return
         if req.get("op") == "search":
+            used[0] = time.monotonic()
             reply = {"hits": index.search(str(req.get("q", ""))[:2000], int(req.get("limit", 30)))}
         else:
             reply = {"ok": True}
@@ -116,9 +119,15 @@ def main() -> int:
                 time.sleep(SYNC_SECONDS)
 
     threading.Thread(target=sync_loop, daemon=True).start()
-    while True:
-        conn, _ = sock.accept()
-        threading.Thread(target=handle, args=(conn, index, token), daemon=True).start()
+    used = [time.monotonic()]
+    sock.settimeout(60)
+    while time.monotonic() - used[0] < IDLE_SECONDS:
+        try:
+            conn, _ = sock.accept()
+        except socket.timeout:
+            continue
+        threading.Thread(target=handle, args=(conn, index, token, used), daemon=True).start()
+    return 0
 
 
 if __name__ == "__main__":
