@@ -7,19 +7,27 @@ Depth (a consent boundary, `lantern depth N`):
   3 home           containers, services, SSH hosts, well-known local service ports
   4 life           accounts the user connects on purpose (Claude connectors; nothing to scout locally)
 """
+import csv
+import io
 import json
 import os
+import plistlib
 import re
 import shutil
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 from . import memory
 from .paths import ensure_data_dir
 
 DEV_TOOLS = ["git", "gh", "uv", "python3", "node", "npm", "cargo", "go", "java", "dotnet", "code", "nvim", "vim", "tmux", "zsh", "fish",
-             "docker", "podman", "kubectl", "terraform", "aws", "gcloud", "az", "brew", "distrobox"]
+             "docker", "podman", "kubectl", "terraform", "aws", "gcloud", "az", "brew", "distrobox", "winget"]
+PLATFORM = {"darwin": "mac", "win32": "windows"}.get(sys.platform, "linux")
+# Where macOS keeps the user's launchd jobs (Apple's own live under /System and are not the user's). Domain is what
+# `launchctl print` needs to ask after one: gui/<uid> for agents, system for daemons.
+LAUNCHD_DIRS = {"~/Library/LaunchAgents": "gui", "/Library/LaunchAgents": "gui", "/Library/LaunchDaemons": "system"}
 # A Claude session may run inside a container (the desktop app's distrobox, for one). The host is still the machine
 # the user means, so commands that look at the host go through distrobox-host-exec when it is there.
 IN_CONTAINER = Path("/run/.containerenv").exists() or Path("/.dockerenv").exists() or bool(os.environ.get("CONTAINER_ID"))
@@ -118,7 +126,7 @@ def scout_system() -> list[dict]:
         rel = dict(l.split("=", 1) for l in (HOST_ROOT / "etc/os-release").read_text().splitlines() if "=" in l)
         parts.append(rel.get("PRETTY_NAME", "").strip('"'))
     except OSError:
-        parts.append(f"{platform.system()} {platform.release()}")
+        parts.append(platform.platform(aliased=True, terse=True))  # "macOS-14.1", "Windows-11"
     try:
         cpu = next((l.split(":", 1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "")
         mem = next((int(l.split()[1]) // (1024 * 1024) for l in Path("/proc/meminfo").read_text().splitlines() if l.startswith("MemTotal")), 0)
@@ -138,12 +146,33 @@ def _repo_detail(d: Path) -> str:
 
 
 def scout_apps() -> list[dict]:
-    """Desktop apps the user installed (Flatpak), by name."""
+    """Desktop apps the user installed (Flatpak, Homebrew casks, winget), by name."""
     out = []
     for line in _run(["flatpak", "list", "--app", "--columns=application,name"]).splitlines():
         if "\t" in line:
             app, name = line.split("\t", 1)
             out.append({"id": f"app:{app}", "kind": "app", "name": name.strip(), "detail": f"Flatpak {app}", "check": None})
+    if PLATFORM == "mac":
+        out += [{"id": f"app:{c}", "kind": "app", "name": c, "detail": "Homebrew cask", "check": None}
+                for c in _run(["brew", "list", "--cask", "-1"]).split()]
+    if PLATFORM == "windows":
+        out += _winget_apps(_run(["winget", "list", "--disable-interactivity", "--accept-source-agreements"]))
+    return out
+
+
+def _winget_apps(table: str) -> list[dict]:
+    """`winget list` prints a fixed-width table; the header gives the column offsets."""
+    lines = table.splitlines()
+    head = next((i for i, l in enumerate(lines) if l.startswith("Name") and " Id " in l), None)
+    if head is None:
+        return []
+    cols = {c: lines[head].index(c) for c in ("Id", "Version", "Source") if c in lines[head]}
+    out = []
+    for l in lines[head + 2:]:  # header, then a dashed rule
+        name, app = l[:cols["Id"]].strip(), l[cols["Id"]:cols.get("Version")].strip()
+        # Rows without a source are programs winget merely sees in the registry (drivers, runtimes); the user's apps have one.
+        if name and app and ("Source" not in cols or l[cols["Source"]:].strip()):
+            out.append({"id": f"app:{app}", "kind": "app", "name": name, "detail": f"winget {app}", "check": None})
     return out
 
 
@@ -209,8 +238,55 @@ def scout_tools() -> list[dict]:
     return out
 
 
+def _launchd_jobs() -> list[dict]:
+    """The user's launchd agents and daemons from their plists (read-only): a job on a schedule is a timer, the rest are services."""
+    out = []
+    for folder, domain in LAUNCHD_DIRS.items():
+        for f in sorted(Path(folder).expanduser().glob("*.plist"))[:300]:
+            try:
+                job = plistlib.loads(f.read_bytes())
+            except (OSError, ValueError, plistlib.InvalidFileException):
+                continue
+            label = job.get("Label") or f.stem
+            if label.startswith("com.apple."):
+                continue
+            what = "daemon" if domain == "system" else "agent"
+            target = f"{domain}/{os.getuid()}/{label}" if domain == "gui" else f"system/{label}"
+            if "StartCalendarInterval" in job or "StartInterval" in job:
+                out.append({"id": f"timer:{label}", "kind": "timer", "name": label, "detail": f"launchd {what} on a schedule ({f})", "check": None})
+            else:
+                out.append({"id": f"service:{label}", "kind": "service", "name": label, "detail": f"launchd {what} ({f})",
+                            "check": {"type": "launchd", "target": target}})
+    return out
+
+
+def _windows_tasks() -> list[dict]:
+    rows = csv.reader(io.StringIO(_run(["schtasks", "/Query", "/FO", "CSV", "/NH"])))
+    # Windows' own tasks live under \Microsoft; the user's are the rest.
+    return [{"id": f"timer:{r[0]}", "kind": "timer", "name": r[0], "detail": f"Windows scheduled task ({r[2]})", "check": None}
+            for r in rows if len(r) >= 3 and not r[0].startswith("\\Microsoft\\")]
+
+
+def _windows_services() -> list[dict]:
+    raw = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Get-CimInstance Win32_Service | Where-Object State -eq Running | Select-Object Name,PathName | ConvertTo-Json -Compress"])
+    try:
+        svcs = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    windir = os.environ.get("SystemRoot", r"C:\Windows").lower()
+    return [{"id": f"service:{s['Name']}", "kind": "service", "name": s["Name"], "detail": f"Windows service ({s.get('PathName') or '?'})",
+             "check": {"type": "winservice", "name": s["Name"]}}
+            for s in ([svcs] if isinstance(svcs, dict) else svcs)
+            if not (s.get("PathName") or "").strip('"').lower().startswith(windir)]  # the OS's own services run from %SystemRoot%
+
+
 def scout_timers() -> list[dict]:
-    """The user's own scheduled jobs (systemd user timers), so a new one is noticed like any other capability."""
+    """The user's own scheduled jobs (systemd user timers, scheduled launchd jobs, Windows scheduled tasks)."""
+    if PLATFORM == "mac":
+        return [j for j in _launchd_jobs() if j["kind"] == "timer"]
+    if PLATFORM == "windows":
+        return _windows_tasks()
     out = []
     for line in _run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"]).splitlines():
         parts = line.split()
@@ -252,8 +328,12 @@ def scout_containers() -> list[dict]:
 
 def scout_services() -> list[dict]:
     """Services the user added (user units, and system units outside the OS's own set)."""
+    if PLATFORM == "mac":
+        return [j for j in _launchd_jobs() if j["kind"] == "service"]
+    if PLATFORM == "windows":
+        return _windows_services()
     if not _which("systemctl"):
-        return []  # macOS launchd / Windows services: shortcut: not scouted yet, add when a user on them asks
+        return []
     out = []
     for scope in (["--user"], []):
         units = [l.split()[0] for l in _run(["systemctl", *scope, "list-units", "--type=service", "--state=running",
@@ -354,6 +434,10 @@ def healthy(check: dict) -> bool | None:
     if t == "service":
         scope = ["--user"] if check["scope"] == "user" else []
         return _run(["systemctl", *scope, "is-active", check["name"]]).strip() == "active"
+    if t == "launchd":
+        return "state = running" in _run(["launchctl", "print", check["target"]])
+    if t == "winservice":
+        return "RUNNING" in _run(["sc", "query", check["name"]])
     return None
 
 
