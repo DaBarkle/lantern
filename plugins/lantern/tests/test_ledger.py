@@ -444,6 +444,21 @@ class DoctorRepairTest(unittest.TestCase):
             self.assertEqual(start.call_count, 1)
 
 
+class SinceLastPlacementTest(unittest.TestCase):
+    def test_since_last_is_named_at_the_top_and_in_full_at_the_end(self):
+        from lantern_core import discovery, hooks, insights
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            discovery.save_settings({"depth": 2, "answered_at": 1.0})
+            hooks.session_start({"source": "startup", "session_id": "s0", "cwd": d})  # a first returning session has nothing to diff
+            with mock.patch.object(insights, "diff_since_last", return_value="Since the last session: 0 findings resolved, 1 new, 3 unchanged. New: failed x.service."):
+                out = hooks.session_start({"source": "startup", "session_id": "s1", "cwd": d})
+            text = out["hookSpecificOutput"]["additionalContext"]
+            top, rest = text.split("\n", 2)[1], text.rsplit("SINCE LAST SESSION", 1)[-1]
+            self.assertTrue(top.startswith("Since last session, in brief: Since the last session: 0 findings resolved, 1 new"), top[:120])
+            self.assertIn("1 new", rest)
+            self.assertLess(text.index("in brief"), text.index("SINCE LAST SESSION ("))
+
+
 class ScoutingLineTest(unittest.TestCase):
     def test_scouting_is_announced_when_the_daily_discover_starts(self):
         from lantern_core import discovery, hooks, jobs

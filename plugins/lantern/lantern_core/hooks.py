@@ -316,6 +316,8 @@ def session_start(payload: dict) -> dict | None:
     if tail_block and not first:
         stored = memory_rules_count
         discovery.update_settings(since_last={**(discovery.settings().get("since_last") or {}), "block": "\n".join(tail_block)[:6000], "block_at": time.time()})
+        lines.insert(1, "Since last session, in brief: " + tail_block[0][:300].rstrip() + " (The full SINCE LAST SESSION block closes "
+                     "this context; your first reply opens from it.)")  # named at the top too: a long context must not bury it
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
                   "these lines, using their counts and reasons word for word (names of things as the register line above says); never split a count into parts of your own; name every "
                   "item in a 'Found on this machine' line; then answer):"] + tail_block
