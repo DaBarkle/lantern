@@ -273,3 +273,14 @@ records what it saw in the AUDIT section and tells the critic, in the events tex
 leave them out of the watches and since-last scores. The harness is not changed for this: on a real machine other failed
 units are real and must be reported. Compare pooled weeks with pooled weeks; for a strict baseline run with
 `WEEK_SLOTS=1` when the machine is otherwise idle.
+
+### 2026-10-31, weeks 8 and 9 under the pool (plugin 1550917, three sibling weeks running)
+
+Both clean on lint and audit. Week 8 (default): watches 6, open loops 5, rules 8, since-last 3, sharper 6, just works 4,
+autonomy 6 against the serial baseline 7/4/7/5/5, 3, 5. Week 9 (nontech): 3/3/8/3/4, just works 3, autonomy 5 against
+2/3/8/3/5, 2, 4. Since-last is not comparable in either: sibling weeks' test units and folders were in view (now
+disclosed to the critic as noise). Verification added two harness details: the "New:" list in the since-last line is cut
+at six names while the count says eight (`insights.py`), and the "profile never confirmed" line fires whenever anything
+is still pending, not only the profile, so a confirmed profile is asked again (`hooks.py`, the `pending` check). The
+nontech week still showed jargon with the plain register in force, which the verifiers put on the model; a Stop-hook
+check for the plain register is the open proposal.
