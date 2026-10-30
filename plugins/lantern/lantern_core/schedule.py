@@ -7,11 +7,24 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import discovery
+
+
+def _uv() -> str:
+    """The scheduler runs the job outside Claude Code with a bare PATH, so uv is named by its full path. Inside a
+    container (a distrobox, say) the timer still runs on the host, so it must be the host's uv, not the container's."""
+    if discovery.HOST_EXEC:
+        try:
+            r = subprocess.run([discovery.HOST_EXEC, "sh", "-c", "command -v uv"], capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return shutil.which("uv") or "uv"
+
 
 def _launcher(entry: Path, job: str, data: Path | None = None) -> list[str]:
-    # The job runs outside Claude Code with the scheduler's bare PATH, so uv is named by its full path.
-    uv = shutil.which("uv") or "uv"
-    return [uv, "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
+    return [_uv(), "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
 
 
 def plan(job: str, hour: int | None, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
@@ -52,8 +65,12 @@ def plan(job: str, hour: int | None, entry: Path, platform: str = sys.platform, 
 
 
 def apply(p: dict) -> None:
+    """Write the files and run the commands; raises CalledProcessError or OSError when this box has no scheduler to
+    talk to (a container without a user systemd, a locked-down host), so callers can fall back to in-session checks."""
     for path, text in p["files"].items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     for argv in p["commands"]:
+        if discovery.HOST_EXEC and argv[0] in discovery.HOST_TOOLS:
+            argv = [discovery.HOST_EXEC, *argv]  # the container's systemctl cannot reach the host's user manager
         subprocess.run(argv, check=True)

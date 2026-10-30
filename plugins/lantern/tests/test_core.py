@@ -103,5 +103,21 @@ class ScheduleTest(unittest.TestCase):
             schedule.plan("doctor", 24, self.entry, "linux")
 
 
+    def test_inside_a_container_the_timer_is_built_for_the_host(self):
+        from lantern_core import discovery
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return mock.Mock(returncode=0, stdout="/home/linuxbrew/.linuxbrew/bin/uv\n")
+        with mock.patch.object(discovery, "HOST_EXEC", "/usr/bin/distrobox-host-exec"), mock.patch.object(schedule.subprocess, "run", run), \
+                tempfile.TemporaryDirectory() as d:
+            p = schedule.plan("watch", None, self.entry, "linux", Path(d))
+            self.assertIn("ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run", next(iter(p["files"].values())))  # the host's uv, not the box's
+            schedule.apply(p)
+            self.assertIn("OnCalendar=hourly", (Path(d) / ".config/systemd/user/lantern-watch.timer").read_text())
+        self.assertEqual(calls[0], ["/usr/bin/distrobox-host-exec", "sh", "-c", "command -v uv"])
+        self.assertEqual(calls[-1][:3], ["/usr/bin/distrobox-host-exec", "systemctl", "--user"])  # systemctl asks the host
+
 if __name__ == "__main__":
     unittest.main()
