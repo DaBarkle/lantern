@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, survey, transcript
+from . import __version__, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, statusline, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -164,6 +164,11 @@ def session_start(payload: dict) -> dict | None:
     if payload.get("source") not in ("compact", "resume"):
         capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
+    if payload.get("source") not in ("compact", "resume"):
+        _, msg, changed = statusline.ensure()  # the per-turn signal sets itself up; the user edits nothing
+        if changed:
+            lines += [f"Lantern's {msg}: its one-line status now shows under each reply, and in a terminal at the bottom of the "
+                      "screen. Tell the user so in one line the first time you reply."]
     db = memory.connect()
     try:
         moved = ""
@@ -569,7 +574,7 @@ def git_state(db, cwd: str) -> None:
 
 
 HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop,
-            "subagent-stop": subagent_stop, "pre-tool-use": shield.pre_tool_use}
+            "subagent-stop": subagent_stop, "pre-tool-use": shield.pre_tool_use, "signal": statusline.signal}
 
 
 def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:

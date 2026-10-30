@@ -28,7 +28,7 @@ Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Sa
 | **Doctor** | Daily, and on demand: recall rate, memory freshness, hook latency, secret shield, each accepted capability. It repairs what it safely can. | You do not wonder whether it is working. |
 | **Shield** | Raw secrets never enter a command, a file, a note or the model. When a key is needed Claude asks for it in one plain sentence; you paste it as your next message, on its own, and Lantern puts it in the OS keychain and stops that message before the model sees it (typing `secret NAME: value` works too). Commands get it as an environment variable. Items in 1Password, Bitwarden, pass or KeePassXC are linked by reference (`op://`, `bw://`, `pass://`, `keepass://`) and read through that manager's own CLI only when a command runs; Lantern never installs a manager for you. A session with no device keychain stops a pasted secret all the same and keeps it nowhere. | Nothing leaks, and you never leave the conversation. |
 | **Approvals** | Questions that matter go to your phone (ntfy), outbound only, with a confirmation back. To reach another host Lantern makes its own SSH key and asks once on the phone before installing it; nothing is typed and your keys stay where they are. | Say yes from anywhere. |
-| **Status** | `lantern status`: *3 notes recalled last turn · 2,484 things known · learned 4 today · all well*. | One plain line, no readouts. |
+| **Status** | Every turn, one line: *3 notes recalled last turn · 2,484 things known · learned 4 today · all well*. In a terminal it is Claude Code's status line, which Lantern sets up itself (a status line you already had keeps running above it); elsewhere it appears under each reply. | You see it working, with nothing to set up. |
 
 No model call ever sits on the prompt path. A prompt costs Lantern about 50 milliseconds.
 
@@ -37,7 +37,7 @@ No model call ever sits on the prompt path. A prompt costs Lantern about 50 mill
 | Command | What it does |
 | --- | --- |
 | `/lantern:setup` | Revisit the setup choices (it happens by itself in the first session) |
-| `/lantern:status` | Is it working? One plain line, and the fix if not |
+| `/lantern:status` | Is it working? The same line, and the fix if not |
 | `/lantern:profile` | Everything Lantern believes about you and your rules |
 | `/lantern:recall <topic>` | What memory holds on a topic |
 | `/lantern:remember <text>` | Add something yourself |
