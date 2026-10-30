@@ -142,5 +142,5 @@ def own_jobs(entry: Path, repair: bool = True) -> list[tuple[str, str, float]]:
             log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "5", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
             why = next((l for l in reversed(log) if "Unable to locate" in l or "Error" in l or "error" in l), log[-1] if log else "no journal line")
             out.append((f"insight/own-job/{job}", f"Lantern's own {job} job failed at {show.get('ExecMainExitTimestamp', '?')} (exit {status}; "
-                        f"{why[:120]}); " + ("a bare `uv` in the unit: run `lantern schedule --apply` to repoint it" if "locate executable 'uv'" in why else "the next session start runs it again in the background"), 3))
+                        f"{why[:120]}); " + ("the unit named a bare `uv`, which a timer cannot find; it has since been repointed and runs at its next time" if "locate executable 'uv'" in why else "the next session start runs it again in the background"), 3))
     return out
