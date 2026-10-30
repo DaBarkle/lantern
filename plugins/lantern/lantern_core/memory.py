@@ -179,10 +179,20 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["turns"] += 1
     d["last"] = turn["user"][:400]
     d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
+    d["loops"] = open_loops(turn.get("reply", ""))
     with db:
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
     return d
+
+
+_LOOP = re.compile(r"(?m)^\s*(?:[-*\d.]+\s*)?((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot)|Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked))[^\n]{10,220})")
+
+
+def open_loops(reply: str, limit: int = 5) -> list[str]:
+    """Promises and gaps the assistant stated in its reply ("I didn't check X", "Next, I can Y"), so the next session
+    closes or re-asks them instead of repeating them."""
+    return [m.group(1).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
 
 
 def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
@@ -205,6 +215,8 @@ def ledger_lines(d: dict) -> list[str]:
     out = [f"- Goal: {d['goal']}", f"- Last asked: {d['last']}"]
     if d.get("reply"):
         out.append(f"- Last reply ended: {d['reply']}")
+    if d.get("loops"):
+        out.append("- Open loops from that session (close each or say why it is still open; never repeat one unchanged): " + "; ".join(d["loops"]))
     if d["files"]:
         out.append("- Files edited: " + ", ".join(d["files"]))
     if d["commands"]:

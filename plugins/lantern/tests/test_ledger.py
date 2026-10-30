@@ -11,7 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lantern_core import curate, doctor, hooks, memory, transcript  # noqa: E402
+from lantern_core import curate, doctor, hooks, insights, memory, transcript  # noqa: E402
 
 
 def write(path: Path, entries: list[dict]) -> None:
@@ -86,6 +86,8 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("Goal: add a nightly backup timer", ctx)
         self.assertIn("Last asked: now enable it", ctx)
         self.assertIn("Last reply ended: enabled. Next: check it fired at 03:00.", ctx)
+        self.assertEqual(memory.open_loops("Done.\nI didn't check whether the timer fired.\nNext, I can list the largest folders."),
+                         ["I didn't check whether the timer fired", "Next, I can list the largest folders"])
         self.assertIn("/proj/backup.timer", ctx)
         self.assertIn("enable --now backup.timer", ctx)
         ctx = self.call("session-start", {"session_id": "s4", "source": "startup", "cwd": "/third"})["hookSpecificOutput"]["additionalContext"]
@@ -423,3 +425,7 @@ class SetupAnswerTest(unittest.TestCase):
             self.assertIn("setup questions were answered", ctx)
             self.assertIn("Lantern's watches", ctx)
             self.assertIn("Now: 20", ctx)
+            db = memory.connect()
+            hooks.stage.publish(db, "insight/failed/x.service", "insight", "x.service has failed", score=5)
+            self.assertIn("failed: x.service", insights.watch_summary(db))
+            db.close()

@@ -124,7 +124,7 @@ def run(db, now: float | None = None, force: bool = False) -> list[str]:
     if not force and now - s.get("insights_at", 0) < FRESH_SECONDS:
         return [e["message"] for e in stage.top(db, k=50, now=now) if e["source"] == "insight"]
     discovery.save_settings({**discovery.settings(), "insights_at": now})
-    found = repos(caps, now) + disk() + services(caps) + unit_secrets()
+    found = repos(caps, now) + disk() + services(caps) + unit_secrets() + backups()
     found.sort(key=lambda f: -f[2])
     for key, msg, score in found:
         stage.publish(db, key, "insight", msg, score=score, days=3, now=now)
@@ -167,13 +167,35 @@ def diff_since_last(found_keys: set[str]) -> str:
     return line
 
 
+def backups() -> list[tuple[str, str, float]]:
+    """User timers that look like backup jobs: when they last ran and whether that run succeeded."""
+    out = []
+    timers = [l.split()[0] for l in discovery._run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"]).splitlines()
+              if l.split() and any(w in l.lower() for w in ("backup", "restic", "borg", "rsync", "snapshot"))]
+    for timer in timers[:5]:
+        unit = timer.replace(".timer", ".service")
+        show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,ExecMainExitTimestamp", unit]).splitlines() if "=" in l)
+        when, result = show.get("ExecMainExitTimestamp", ""), show.get("Result", "")
+        if result and result != "success":
+            out.append((f"insight/backup/{unit}", f"backup job {unit} last ended with result {result} (exit {show.get('ExecMainStatus', '?')}) at {when or 'unknown time'}", 7))
+        elif when:
+            out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when}", 1))
+    return out
+
+
 def watch_summary(db) -> str:
-    """What the watches currently see, in one line: counts by kind and the disk level."""
+    """What the watches currently see, in one line: counts by kind (failed units by name), backups, and the disk level."""
     entries = [e for e in stage.top(db, k=100) if e["source"] == "insight"]
     kinds = {}
     for e in entries:
         kinds[e["key"].split("/")[1]] = kinds.get(e["key"].split("/")[1], 0) + 1
-    parts = [f"{n} {k.replace('repo-', 'project ')}" for k, n in sorted(kinds.items())]
+    parts = [f"{n} {k.replace('repo-', 'project ')}" for k, n in sorted(kinds.items()) if k != "backup-ok"]
+    failed = [e["key"].split("/", 2)[2] for e in entries if e["key"].startswith("insight/failed/")]
+    if failed:
+        parts.append("failed: " + ", ".join(failed))
+    for e in entries:
+        if e["key"].startswith("insight/backup"):
+            parts.append(e["message"])
     try:
         u = shutil.disk_usage(str(Path.home()))
         parts.append(f"home volume {100 * (u.total - u.free) / u.total:.0f}% used, {u.free / 1e9:.0f} GB free")

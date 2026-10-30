@@ -117,7 +117,12 @@ earlier found"), never as if another agent did it. Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
-ask only before a write to the system. Sort fixes so that anything another fix depends on comes first. Label evidence:
+ask only before a write to the system. Read-only watching is on by default: announce it, offer "say stop watching X",
+never ask permission for it. Never mention tool names, hooks, "no shell", "the question tool" or Lantern's commands to
+the user; at most one plain line about what you could not reach. Absolute words ("only", "never", "all") are allowed
+only on claims tagged verified. Before saying A must come before B, name the concrete mechanism by which B fails
+without A; if you cannot, there is no dependency. Never suggest pushing, copying off-machine or deleting a folder in
+a first reply, and never suggest a remote for a tree that has not had a secret scan. Sort fixes so that anything another fix depends on comes first. Label evidence:
 "verified" only for what was observed in the artifact itself; "from config" for what is inferred from paths or
 settings. Use the "Now:" line above to compare against scheduled runs and flag a missed one. After any task, end by
 offering the next useful thing in one line, drawn from what Lantern knows."""
@@ -373,9 +378,9 @@ def setup_answer(prompt: str) -> str | None:
     jobs.start(["discover"], Path(__file__).resolve().parents[1] / "lantern.py")
     return ("The user accepted the setup as proposed. Lantern stored these rules verbatim: " + " | ".join(f'"{g}"' for g in GUARDRAILS)
             + ". It confirmed the machine's purpose as the profile and started the wider look in the background (its finds show "
-            "at the next session start or on Stage). Acknowledge in one line, naming the rules; do not repeat the questions. "
-            "If the user chose a subset or added one, store exactly those instead with `remember --rule` and drop the others "
-            "with `forget`.")
+            "at the next session start or on Stage). Acknowledge in one line that names the rules and says 'I took that as yes to "
+            "all of them; say if not'. If you offered a machine-specific option too, store it with `remember --rule` now. If the "
+            "user chose a subset, store exactly those with `remember --rule` and drop the others with `forget`.")
 
 
 def note_correction(db, session: str, prompt: str) -> int | None:
