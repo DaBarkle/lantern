@@ -102,7 +102,8 @@ def main() -> int:
     token = semantic.write_token(data)
 
     from fastembed import TextEmbedding
-    index = Index(TextEmbedding(semantic.MODEL, cache_dir=str(data / "models")))
+    cache = data.parent.parent / "models" if data.parent.name == "profiles" else data / "models"  # one model for all profiles
+    index = Index(TextEmbedding(semantic.MODEL, cache_dir=str(cache)))
 
     def sync_loop():
         db = memory.connect()  # sqlite connections belong to the thread that made them
