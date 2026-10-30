@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from . import discovery, memory, semantic, shield, stage
+from . import discovery, memory, resources, semantic, shield, stage
 from .paths import ensure_data_dir
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -29,6 +29,8 @@ def check_data_dir():
 
 def check_semantic():
     if semantic.search(ensure_data_dir(), "doctor") is None:
+        if not resources.can_spawn():
+            return WARN, "memory server is down and the machine is short of memory, so it was not started; recall is keyword-only"
         # Repair rather than report: start the server detached, as the plugin monitor would at the next session.
         import subprocess
         import sys
@@ -104,8 +106,15 @@ def check_hook_latency():
     return OK, f"hooks: 9 in 10 finish within {p90} ms"
 
 
+def check_resources():
+    free = resources.available_mb()
+    if free is not None and free < resources.MIN_FREE_MB:
+        return WARN, f"the machine has only {free} MB free; Lantern is holding its background work until that recovers"
+    return OK, "memory headroom ok" if free is None else f"{free:,} MB free"
+
+
 CHECKS = {"data-dir": check_data_dir, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
-          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency}
+          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "resources": check_resources}
 
 
 def run_all() -> list[tuple[str, str, str]]:

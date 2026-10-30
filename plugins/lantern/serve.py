@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
-from lantern_core import memory, semantic  # noqa: E402
+from lantern_core import memory, resources, semantic  # noqa: E402
 from lantern_core.paths import ensure_data_dir  # noqa: E402
 
 SYNC_SECONDS = 10
@@ -88,6 +88,8 @@ def handle(conn, index, token):
 
 def main() -> int:
     data = ensure_data_dir()
+    if not resources.can_spawn():
+        return 0  # no room for a 300 MB model right now; recall stays keyword-only and the doctor retries later
     port = semantic.port_for(data)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if sys.platform != "win32":  # rebind straight after a restart; on Windows this flag would let two servers share

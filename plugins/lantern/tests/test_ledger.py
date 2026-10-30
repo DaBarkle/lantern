@@ -249,3 +249,17 @@ class OnboardingTest(unittest.TestCase):
             discovery.cli(["depth", "2"])
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertNotIn("/lantern:setup", ctx)
+
+
+class ResourceGuardTest(unittest.TestCase):
+    def test_no_background_work_when_memory_is_short(self):
+        from lantern_core import jobs, resources
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(resources, "available_mb", return_value=200):
+            with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned under memory pressure")):
+                self.assertEqual(jobs.start(["doctor"], Path("/x/lantern.py")), [])
+                with mock.patch.object(doctor.semantic, "search", return_value=None):
+                    self.assertEqual(doctor.check_semantic()[0], doctor.WARN)
+            self.assertEqual(doctor.check_resources()[0], doctor.WARN)
+        with mock.patch.object(resources, "available_mb", return_value=None):
+            self.assertTrue(resources.can_spawn())  # unknown platform: no false alarms

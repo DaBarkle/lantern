@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import curate
+from . import curate, resources
 from .paths import ensure_data_dir
 
 DUE = {"curate": 20 * 3600, "doctor": 20 * 3600, "discover": 20 * 3600}  # a little under a day, so a daily session always triggers them
@@ -45,6 +45,8 @@ def mark(job: str, key: str, now: float | None = None) -> None:
 def start(jobs: list[str], entry: Path) -> list[str]:
     """Start each job detached and return what was started."""
     started = []
+    if jobs and not resources.can_spawn():
+        return started  # the machine is short of memory: today's jobs wait for a calmer session
     for job in jobs:
         mark(job, "started")
         cmd = ["uv", "run", "--no-project", "--quiet", str(entry), "job", job, "--data", str(ensure_data_dir())]
