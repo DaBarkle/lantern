@@ -5,7 +5,7 @@ description: Check Home Assistant's health and read or change entities, automati
 # Home Assistant
 
 Home Assistant usually answers on port 8123. The REST API needs a long-lived access token: ask the user to create one
-(Profile, Security) and store it with `lantern secret set HA_TOKEN`. Never paste it into the chat.
+(Profile, Security) and hand it over in chat as `secret HA_TOKEN: <value>`; Lantern stores it in the keychain before the model sees the message. Never ask for it as plain text.
 
 Read first:
 - `lantern secret run HA_TOKEN -- sh -c 'curl -s -H "Authorization: Bearer $HA_TOKEN" http://HOST:8123/api/'` answers `API running.` when healthy.

@@ -6,7 +6,7 @@ description: Read UniFi network state (devices, clients, Wi-Fi, firewall, VLANs)
 
 The Network application answers on port 8443 (self-hosted) or on the gateway itself (UniFi OS consoles, port 443, API
 under `/proxy/network`). Use a local, read-only admin account where possible and store its credentials with
-`lantern secret set UNIFI_USER` and `UNIFI_PASS`, or an API key with `UNIFI_API_KEY`.
+the user hands over in chat as `secret UNIFI_USER: <value>` and `secret UNIFI_PASS: <value>` (or `secret UNIFI_API_KEY: <value>`); Lantern stores them in the keychain before the model sees them, and commands get them as environment variables.
 
 Read first:
 - Devices: `/api/s/default/stat/device`; clients: `/api/s/default/stat/sta`; health: `/api/s/default/stat/health`.
