@@ -167,11 +167,14 @@ def timers() -> list[tuple[str, str, float]]:
         discovery.update_settings(timers_seen=sorted(now))
         return []
     new = sorted(set(now) - set(seen))
-    if new:
-        discovery.update_settings(timers_seen=sorted(set(seen) | set(now)))
-    return [(f"insight/timer-new/{t}", f"a new scheduled job appeared: {t} (next run {now[t]}); say so once, it may be the user's own doing", 2) for t in new]
+    first = {t: at for t, at in (s.get("timers_new_at") or {}).items() if t in now and time.time() - at < NEW_TIMER_DAYS * 86400}
+    first.update({t: time.time() for t in new})  # the night watcher found it; the next session's since-last must still see it as new
+    if new or first != (s.get("timers_new_at") or {}):
+        discovery.update_settings(timers_seen=sorted(set(seen) | set(now)), timers_new_at=first)
+    return [(f"insight/timer-new/{t}", f"a new scheduled job appeared: {t} (next run {now[t]}); say so once, it may be the user's own doing", 2) for t in sorted(first)]
 
 
+NEW_TIMER_DAYS = 3  # a timer stays a "new" finding this long, so a live re-check cannot resolve it before the diff reports it
 FRESH_SECONDS = 3600
 LIVE_KINDS = ("failed", "failed-system", "disk", "timer-new")  # cheap enough to re-check at every session start
 

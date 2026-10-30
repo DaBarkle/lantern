@@ -961,4 +961,13 @@ class LiveChecksTest(unittest.TestCase):
             self.assertTrue(any("new scheduled job appeared: other.timer (next run Sun 2026-11-02 04:00:00)" in m for m in msgs), msgs)
             self.assertFalse(any("x.service" in m for m in msgs))  # cleared since: gone from the live set
             self.assertEqual(discovery.settings()["timers_seen"], ["new-job.timer", "other.timer"])
+            with mock.patch.object(insights.discovery, "_run", side_effect=run2), mock.patch.object(insights, "disk", return_value=[]), \
+                    mock.patch.object(insights, "repos", return_value=[]):
+                again = insights.real_run(db)  # the next session start re-checks live: the timer is still the night's new finding
+            self.assertTrue(any("new scheduled job appeared: other.timer" in m for m in again), again)
+            with mock.patch.object(insights.discovery, "_run", side_effect=run2), mock.patch.object(insights, "disk", return_value=[]), \
+                    mock.patch.object(insights, "repos", return_value=[]), \
+                    mock.patch.object(insights.time, "time", return_value=time.time() + (insights.NEW_TIMER_DAYS + 1) * 86400):
+                later = insights.real_run(db)
+            self.assertFalse(any("other.timer" in m for m in later))  # after its days it is simply known
             db.close()
