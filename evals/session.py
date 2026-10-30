@@ -55,6 +55,8 @@ def _ok(toks: list[str]) -> bool:
         return not any(t.startswith("-i") or t == "--in-place" for t in toks)
     if prog == "find":
         return not any(t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls") for t in toks)
+    if prog == "sqlite3":  # only a read-only open: -readonly, or a file: URI with mode=ro / immutable=1
+        return "-readonly" in toks or any(t.startswith("file:") and ("mode=ro" in t or "immutable=1" in t) for t in toks)
     if prog == "curl":
         drop = {i for i, t in enumerate(toks) if t == "/dev/null" and toks[i - 1] in ("-o", "--output")}
         toks = [t for i, t in enumerate(toks) if i not in drop and i + 1 not in drop]  # "-o /dev/null" writes nothing
@@ -250,6 +252,7 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert allowed("curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -o out.bin http://x") and allowed("git worktree list") and not allowed("git worktree add x")
     assert allowed("command -v restic borg rclone") and allowed("podman system df") and not allowed("podman system prune") and allowed("[ -f $ex ] && cat $ex")
     assert allowed("podman inspect plex --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'") and not allowed("echo x > f") and not allowed("cat a >> b")
+    assert allowed("sqlite3 -readonly ~/x/memory.db 'select count(*) from notes'") and allowed("sqlite3 'file:/x/m.db?immutable=1' .tables") and not allowed("sqlite3 /x/m.db 'delete from notes'")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b." && \\\n"$L" remember --rule "c"')  # line continuation
     assert allowed("curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -s -o /tmp/x http://localhost:1/")
