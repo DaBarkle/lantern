@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Install Lantern (core, tailscale pack, David's private pack) at user scope. Safe to run twice.
+# Install Lantern (core and the tailscale pack) at user scope. Safe to run twice.
 set -euo pipefail
 claude plugin marketplace add "$HOME/lantern" 2>&1 | tail -1 || true
-claude plugin marketplace add "$HOME/lantern-david" 2>&1 | tail -1 || true
-for p in lantern@lantern lantern-tailscale@lantern lantern-david@lantern-david; do
+for p in lantern@lantern lantern-tailscale@lantern; do
   claude plugin install --scope user "$p" 2>&1 | tail -1
 done
 echo
