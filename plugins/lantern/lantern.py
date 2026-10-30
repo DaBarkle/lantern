@@ -63,7 +63,7 @@ def memory_cli(argv: list[str]) -> int:
             kind = {"--profile": "profile", "--rule": "rule", "--pattern": "pattern"}.get(argv[1], "fact")
             text = " ".join(argv[2:] if kind != "fact" else argv[1:])
             if shield.find(text):
-                print("that looks like a secret; Lantern will not store it (use `lantern secret set`)", file=sys.stderr)
+                print("that looks like a secret; Lantern will not store it in memory (ask for it with `lantern secret ask NAME`, it goes to the keychain)", file=sys.stderr)
                 return 1
             memory.add(db, kind, "manual", text)
             settle_setup({"profile": "purpose", "rule": "guardrails"}.get(kind, ""))
