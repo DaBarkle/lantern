@@ -78,8 +78,14 @@ scores low on them; a harness that watches the machine scores high. Add new surp
 
 Usage is not the constraint; memory is. The machine also runs the Nyx VM, Wazuh, Steam and the owner's remote session.
 
-- One simulated week at a time, one memory server (about 330 MB) per probe profile, started by the rig and killed by it
-  with the port checked closed. The rig refuses to start under 6 GB of available memory.
+- Weeks take one of `WEEK_SLOTS` machine-wide slots (default 1, so one week at a time until the owner raises it); a slot
+  is taken only when available memory is at least 6 GB plus 3 GB for every sim week already running. Each week has its
+  own memory server (measured 2026-10-31: 330 MB at start, about 0.9 GB after a run; the owner's own server with 40 MB
+  of memory sits at 1.3 GB), its own session (about 260 MB) and, on day 1, a Sonnet survey (about 260 MB). Every new
+  week first kills orphaned sim servers (a server with no `week.py` above it). Each week's units, timer and SSH host
+  carry the profile name, so two weeks never touch the same machine state. Measured on 2026-10-31 at 05:48: 18.3 GB
+  available, 10.4 GB of 16 GB swap in use, load 4.3 on 16 cores. Proposed cap: 3 weeks side by side (about 4.5 GB),
+  which the headroom rule allows only above 12 GB available; CPU is not the constraint.
 - Lantern sessions and surveys run on bazzite; critics and verifiers are API-side and may fan out freely.
 - Never touch Tailscale, the Nyx VM, real services, real backups or the real Lantern memory
   (`~/.claude/plugins/data/lantern-lantern`). The rig's only writes outside its profile are the listed events, all undone
