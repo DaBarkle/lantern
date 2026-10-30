@@ -277,3 +277,25 @@ class ResourceGuardTest(unittest.TestCase):
             self.assertEqual(doctor.check_resources()[0], doctor.WARN)
         with mock.patch.object(resources, "available_mb", return_value=None):
             self.assertTrue(resources.can_spawn())  # unknown platform: no false alarms
+
+
+class IndexDatesTest(unittest.TestCase):
+    def test_fact_index_lines_are_dated(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "fact", "curate:a", "Paperclip was stopped on purpose.", created=time.mktime(time.strptime("2026-10-09", "%Y-%m-%d")))
+            db.close()
+            ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("- [2026-10] Paperclip was stopped on purpose.", ctx)
+
+
+class PreviousMessageTest(unittest.TestCase):
+    def test_previous_message_only_widens_short_prompts(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            seen = []
+            with mock.patch.object(hooks.transcript, "previous_user", side_effect=lambda p: seen.append(p) or "earlier topic"), \
+                    mock.patch.object(hooks.semantic, "search", return_value=None):
+                hooks.user_prompt_submit({"prompt": "why?", "session_id": "s", "transcript_path": "t"})
+                self.assertEqual(seen, ["t"])
+                hooks.user_prompt_submit({"prompt": "please list every container on nyx with its image, restart policy and the port it publishes", "session_id": "s", "transcript_path": "t"})
+                self.assertEqual(seen, ["t"])  # a full prompt stands on its own

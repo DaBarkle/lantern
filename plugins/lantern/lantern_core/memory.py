@@ -127,13 +127,16 @@ def profile(db: sqlite3.Connection, max_chars: int) -> str:
     return "\n\n".join(out)
 
 
-def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule") -> list[str]:
-    """One line per item of this kind (its first line), newest first, up to max_chars."""
+def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: bool = False) -> list[str]:
+    """One line per item of this kind (its first line), newest first, up to max_chars. dated: lead with the month, so
+    a session can tell a fresh fact from one that may have moved on."""
     out, used = [], 0
     # A long item is stored in chunks; its first chunk (lowest id) opens with the summary line.
-    for (text,) in db.execute("SELECT text FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
-                              "AND status='active' GROUP BY source) ORDER BY created DESC", (kind,)):
+    for text, created in db.execute("SELECT text, created FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
+                                    "AND status='active' GROUP BY source) ORDER BY created DESC", (kind,)):
         line = text.strip().splitlines()[0][:300] if text.strip() else ""
+        if dated and line:
+            line = f"[{time.strftime('%Y-%m', time.localtime(created))}] {line}"
         if not line or used + len(line) > max_chars:
             continue
         out.append(line)

@@ -194,4 +194,4 @@ class RecallTitlesTest(unittest.TestCase):
             self.assertEqual(full.count("\n- ["), 3)
             self.assertNotIn("detail detail", extra)  # titles only
             start = hooks.session_start({"session_id": "y"})["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("- Plex runs as container-plex.service on bazzite", start)
+            self.assertIn("] Plex runs as container-plex.service on bazzite", start)

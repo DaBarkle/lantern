@@ -55,14 +55,14 @@ def session_start(payload: dict) -> dict | None:
         jobs.start(jobs.due(), Path(__file__).resolve().parents[1] / "lantern.py")
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
     if not discovery.settings_path().exists():  # first run: the session itself is the onboarding
-        lines += ["This is Lantern's first session on this machine. Before anything else, offer the user a two-minute setup "
-                  "(run /lantern:setup) and explain in one line what Lantern will remember and check from now on."]
+        lines += ["This is Lantern's first session on this machine. Answer the user's message first, as normal. Then, at the end "
+                  "of that first reply only, add one line offering the two-minute setup (/lantern:setup)."]
     db = memory.connect()
     try:
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
-        index = memory.rules(db, INDEX_CHARS, kind="fact")
-        patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern")
+        index = memory.rules(db, INDEX_CHARS, kind="fact", dated=True)
+        patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern", dated=True)
         session = payload.get("session_id", "?")
         cwd = payload.get("cwd") or ""
         previous = memory.ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd) if cwd else None
@@ -87,7 +87,8 @@ def session_start(payload: dict) -> dict | None:
     if patterns:
         lines += ["", "How the user's systems are worked on (patterns learned from past sessions):"] + [f"- {p}" for p in patterns]
     if index:
-        lines += ["", "Notes Lantern holds (one line each; recall brings in detail when a prompt matches):"] + [f"- {i}" for i in index]
+        lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
+                  "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]
     caps = discovery.settings().get("capabilities", {})
     if caps:
         lines += ["", "On this machine (accepted by the user in discovery):",
@@ -116,9 +117,11 @@ def user_prompt_submit(payload: dict) -> dict | None:
     if not prompt.strip() or _is_system(prompt):
         return None
     session = payload.get("session_id", "?")
-    # The previous message carries the topic for short follow-ups ("are they all direct?").
-    query = prompt + "\n" + transcript.previous_user(payload.get("transcript_path", ""))
+    query = prompt
     want = set(memory.terms(query))
+    if len(want) < SHORT_PROMPT_TERMS:  # "are they all direct?": the previous message carries the topic
+        query += "\n" + transcript.previous_user(payload.get("transcript_path", ""))
+        want = set(memory.terms(query))
     noted = None
     # A keyword hit must share most of the query's words; common words alone ("operator", "server") match everything.
     need = max(2, math.ceil(KEYWORD_SHARE * len(want))) if len(want) > 1 else 1
