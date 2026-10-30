@@ -184,6 +184,10 @@ class LedgerTest(unittest.TestCase):
         out = call("systemctl --user restart container-plex.service")
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
         self.assertIn("never restart Plex", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIn("Lantern is checking with you before this restart.", out["hookSpecificOutput"]["permissionDecisionReason"])  # the user reads this
+        with mock.patch.object(hooks.semantic, "search", return_value=None):
+            ctx = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ask with the question tool; a yes there is the go-ahead", ctx)  # the guard is the backstop, the ask comes first
         self.assertIsNone(call("systemctl --user restart sonarr.service"))  # no rule names it
         self.assertIsNone(call("systemctl --user status container-plex.service"))  # reading is free
         write(p, [user("plex looks stuck, restart it now"), assistant('Your rule: "from now on, never restart Plex without asking me first, it breaks my parents\' stream". Nobody is streaming; restarting now as you asked.')])
