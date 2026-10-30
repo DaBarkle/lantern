@@ -43,17 +43,21 @@ EXCHANGES:
 """
 
 
-def _ask(prompt: str) -> list[dict]:
-    """Headless claude, isolated: no user settings or hooks, no MCP, no tools, no saved session."""
+def ask(prompt: str, schema: dict = SCHEMA, model: str | None = None) -> dict:
+    """Headless claude, isolated: no user settings or hooks, no MCP, no tools, no saved session. The eval judge uses it too."""
     cwd = ensure_data_dir() / "curate-cwd"
     cwd.mkdir(exist_ok=True)
-    r = subprocess.run([claude_bin(), "-p", "--model", MODEL, "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
+    r = subprocess.run([claude_bin(), "-p", "--model", model or MODEL, "--output-format", "json", "--json-schema", json.dumps(schema),
                         "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--no-session-persistence",
                         "--disable-slash-commands"], input=prompt, capture_output=True, text=True, cwd=cwd, timeout=600)
     if r.returncode:
         raise RuntimeError((r.stderr or r.stdout)[-300:])
     out = json.loads(r.stdout)
-    return (out.get("structured_output") or json.loads(out["result"]))["items"]
+    return out.get("structured_output") or json.loads(out["result"])
+
+
+def _ask(prompt: str) -> list[dict]:
+    return ask(prompt)["items"]
 
 
 def _words(text: str) -> set[str]:

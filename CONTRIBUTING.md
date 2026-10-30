@@ -21,6 +21,7 @@ plugins/lantern/            the core plugin
   commands/                 /lantern:* commands
   tests/                    unittest, run with uv
 plugins/lantern-*/          packs: skills, optional guards
+evals/                      replay.py scores recall on your own transcripts; week.py simulates a week (both need Claude Code)
 .github/workflows/ci.yml    tests on Linux, macOS and Windows
 ```
 

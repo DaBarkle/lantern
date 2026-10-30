@@ -69,4 +69,15 @@ cd plugins/lantern
 uv run --no-project python -m unittest discover -s tests -t .
 ```
 
+Does it help *you*? Score Lantern on your own transcripts:
+
+```sh
+uv run --no-project evals/replay.py        # 30 of your recent prompts; about 90 short Opus calls
+```
+
+It builds a scratch memory from what you said before those prompts, has the same model answer each one with and
+without Lantern's context, and a blind judge (claude-opus-5-5) grades both against what you actually said next: how
+often you would have had to re-teach, how often the reply was wrong about you, and a 1-5 score. Your real Lantern data
+is never touched. `evals/week.py` simulates a week of sessions against a scratch profile.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md). Lantern is Apache-2.0; see [LICENSE](LICENSE).
