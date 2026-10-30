@@ -413,6 +413,7 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
 _REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
 
 
+_DISRUPT_ASK = re.compile(r"\b(?:restart|reboot|bounce|stop|kill|shut (?:it )?down|turn (?:it )?off|disable|remove|delete)\b", re.I)
 _WHAT_CHANGED = re.compile(r"what(?:'s| is| has)? (?:changed|new|happened)|since (?:yesterday|last time|last session|I was (?:away|gone))|"
                            r"anything (?:new|I should know|to report)|how (?:is|are) (?:things|everything|the machine|my (?:computer|machine))", re.I)
 
@@ -529,6 +530,10 @@ def user_prompt_submit(payload: dict) -> dict | None:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
         lines += ["A rule reaches exactly what it names: one about X says nothing about Y, so if this request is outside the "
                   "rule's words, say so in one clause and proceed; if inside, honour it."]
+        if _DISRUPT_ASK.search(prompt):
+            lines += ["The request asks for a restart, stop or similar change to something a rule above names. Before any command: "
+                      "quote that rule word for word, say what you checked about the reason it protects, and ask with the question tool; "
+                      "a yes there is the go-ahead. Never say the user \"declined\" anything."]
         if any(_REASON.search(r) for r in touching):
             lines += ["A rule above states its reason. Before acting on it, run one read-only check of whether that reason holds "
                       "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
@@ -833,9 +838,9 @@ def rule_guard(payload: dict) -> dict | None:
     said = transcript.last_turn(payload.get("transcript_path", ""))["reply"].lower()
     if "your rule" in said or hit[:40].lower() in said:
         return None  # quoted in this turn; the user's go-ahead stands
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
-            "permissionDecisionReason": f'Your rule: "{hit}". Quote it to the user with the reason it protects and what you checked, '
-                                        "and run this only on their go-ahead."}}
+    verb = re.search(r"restart|stop|kill|disable|rm\b", m.group(0)) or re.search(r"\w+", m.group(0))
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",  # this text is what the user reads in the dialog
+            "permissionDecisionReason": f'Your rule: "{hit}". Lantern is checking with you before this {verb.group(0)}.'}}
 
 
 def new_big_files(db, cwd: str, now: float | None = None) -> None:

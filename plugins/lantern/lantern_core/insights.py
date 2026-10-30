@@ -300,7 +300,8 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     if back:
         line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back) + "."
     if new:
-        line += " New: " + "; ".join(_name(k) for k in new) + "."  # every one: the count and the list must agree
+        said = {e["key"]: e["message"] for e in stage.top(db, k=200)} if db is not None else {}  # a failed unit arrives with its journal cause
+        line += " New: " + "; ".join((said.get(k) or _name(k))[:300] for k in new) + "."  # every one: the count and the list must agree
     if changed:
         line += " Changed: " + "; ".join(_why_resolved(k) for k in changed) + "."
     if resolved:
