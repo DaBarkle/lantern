@@ -467,6 +467,9 @@ class InsightsTest(unittest.TestCase):
             line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
             self.assertIn("0 findings resolved, 1 new, 1 unchanged", line)
             self.assertIn("New: failed x.service", line)
+            line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"} | {f"insight/failed/u{i}.service" for i in range(8)})
+            self.assertIn("8 new", line)
+            self.assertIn("; and 2 more.", line)  # the list never disagrees with the count
             with mock.patch.object(insights.discovery, "_run", return_value=""):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/backup/x.service"})
             self.assertIn("0 findings resolved, 0 new, 1 changed, 1 unchanged", line)  # same subject, new kind: changed, not resolved plus new

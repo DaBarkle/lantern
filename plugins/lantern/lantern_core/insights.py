@@ -238,15 +238,18 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
         counts.append(f"{len(back)} back again")
     counts.append(f"{unchanged} unchanged")
     at = s.get("insights_at")
+    def few(items, show):  # the first six by name; the rest counted, so the list never disagrees with the count
+        return "; ".join(show(k) for k in items[:6]) + (f"; and {len(items) - 6} more" if len(items) > 6 else "") + "."
+
     line = "Since the last session: " + ", ".join(counts) + (f" (watches last ran at {time.strftime('%H:%M', time.localtime(at))})." if at else ".")
     if back:
-        line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back[:6]) + "."
+        line += " Back again (cleared since last session, present again now): " + few(back, _why_resolved)
     if new:
-        line += " New: " + "; ".join(_name(k) for k in new[:6]) + "."
+        line += " New: " + few(new, _name)
     if changed:
-        line += " Changed: " + "; ".join(_why_resolved(k) for k in changed[:6]) + "."
+        line += " Changed: " + few(changed, _why_resolved)
     if resolved:
-        line += " Resolved: " + "; ".join(_why_resolved(k) for k in resolved[:6]) + "."
+        line += " Resolved: " + few(resolved, _why_resolved)
     return line
 
 

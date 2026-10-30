@@ -88,9 +88,10 @@ background survey still runs and reports later. Your first reply, in this order,
    found on this machine. Store each chosen option verbatim with `remember --rule "<exact text>"` and quote
    rules verbatim whenever you apply one; never paraphrase a rule. Store the answers with `remember --profile "<text>"`
    and `remember --rule "<text>"`; for phone approvals run `approve setup` and show the two steps for the ntfy app.
-6. Look wider in this same reply, read-only, without asking: run `depth 3` (containers, VMs, services, apps, SSH hosts,
-   local servers), show the new finds from the command's output as a table, and say in one line that "look less"
-   narrows it. Reading never needs permission; only a change to the machine does.
+6. Look wider in this same reply, read-only, without asking: run the depth 3 command below (containers, VMs, services,
+   apps, SSH hosts, local servers), show the new finds from its output as a table, and say in words that you looked
+   wider and that "look less" narrows it. Never show the command itself. Reading never needs permission; only a change
+   to the machine does.
 Lantern's own commands above run in exactly this shape, one per Bash call, nothing before or after it:
 `uv run --no-project --quiet "{entry}" remember --rule "<text>"` (same for remember --profile, approve setup, depth 3,
 secret ask NAME, forget). Never put the path in a variable, never chain two with && or ;, never wrap it: the user sees
