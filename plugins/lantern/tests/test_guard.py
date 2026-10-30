@@ -103,7 +103,7 @@ class ApprovalsTest(unittest.TestCase):
     def setUp(self):
         import http.server
         import threading
-        posts, replies = [], []
+        posts, replies, rate_limits = [], [], []
 
         class Fake(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
@@ -113,6 +113,11 @@ class ApprovalsTest(unittest.TestCase):
                 self.end_headers()
 
             def do_GET(self):
+                if rate_limits:  # ntfy.sh does this to a fast poller; the answer must still get through
+                    rate_limits.pop()
+                    self.send_response(429)
+                    self.end_headers()
+                    return
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write("".join(json.dumps({"event": "message", "message": m}) + "\n" for m in replies).encode())
@@ -122,7 +127,7 @@ class ApprovalsTest(unittest.TestCase):
 
         self.srv = http.server.HTTPServer(("127.0.0.1", 0), Fake)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
-        self.posts, self.replies = posts, replies
+        self.posts, self.replies, self.rate_limits = posts, replies, rate_limits
         self.cfg = {"server": f"http://127.0.0.1:{self.srv.server_port}", "topic": "t"}
 
     def tearDown(self):
@@ -144,7 +149,9 @@ class ApprovalsTest(unittest.TestCase):
             return approvals.ask("Restart Plex?", timeout=timeout, cfg=self.cfg)
 
     def test_approve_and_deny(self):
-        self.assertEqual(self.run_ask("Approve"), approvals.APPROVED)
+        self.rate_limits.extend([1, 1])
+        with mock.patch.object(approvals, "RETRY_SECONDS", 0.05):
+            self.assertEqual(self.run_ask("Approve"), approvals.APPROVED)
         self.posts.clear()
         self.replies.clear()
         self.assertEqual(self.run_ask("Deny"), approvals.DENIED)

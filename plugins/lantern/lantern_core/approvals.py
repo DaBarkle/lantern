@@ -13,7 +13,8 @@ import urllib.request
 from .paths import ensure_data_dir
 
 SERVER = "https://ntfy.sh"
-POLL_SECONDS = 3
+POLL_SECONDS = 10  # ntfy.sh answers 429 to a poll every few seconds
+RETRY_SECONDS = 30
 APPROVED, DENIED, TIMED_OUT = 0, 1, 3
 
 
@@ -53,7 +54,12 @@ def ask(question: str, timeout: float = 600, cfg: dict | None = None) -> int:
                     {"action": "http", "label": "Deny", "url": reply, "method": "POST", "body": f"deny {nonce}", "clear": True}]})
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for msg in _replies(cfg, since):
+        try:
+            replies = _replies(cfg, since)
+        except (OSError, ValueError):  # rate limit or a network blip: the answer will still be there next time
+            time.sleep(min(RETRY_SECONDS, max(0.0, deadline - time.time())))
+            continue
+        for msg in replies:
             if msg == f"approve {nonce}":
                 return APPROVED
             if msg == f"deny {nonce}":
