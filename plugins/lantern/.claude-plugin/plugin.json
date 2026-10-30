@@ -1,7 +1,7 @@
 {
   "name": "lantern",
   "displayName": "Lantern",
-  "version": "0.4.0",
+  "version": "0.3.0",
   "description": "A personal agent harness for Claude Code: memory that builds itself, context on every prompt, self-checks and self-repair.",
   "author": { "name": "DaBarkle" },
   "license": "Apache-2.0",

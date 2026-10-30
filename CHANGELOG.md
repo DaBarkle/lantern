@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (2026-10-31)
+## Unreleased
 
 Measured against simulated weeks on a real machine; the first session is stronger and the sessions after it are honest.
 
