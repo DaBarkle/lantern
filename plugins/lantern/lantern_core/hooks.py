@@ -1,4 +1,5 @@
 """Claude Code hook entry points. Each reads the event JSON on stdin and may print a JSON reply."""
+import hashlib
 import json
 import math
 import os
@@ -90,7 +91,8 @@ background survey still runs and reports later. Your first reply, in this order,
    and `remember --rule "<text>"`; for phone approvals run `approve setup` and show the two steps for the ntfy app.
 6. Look wider in this same reply, read-only, without asking: run `depth 3` (containers, VMs, services, apps, SSH hosts,
    local servers), show the new finds from the command's output as a table, and say in one line that "look less"
-   narrows it. Reading never needs permission; only a change to the machine does.
+   narrows it. Reading never needs permission; only a change to the machine does. The command is yours to run, never
+   shown to the user; they see only what was found.
 Lantern's own commands above run in exactly this shape, one per Bash call, nothing before or after it:
 `uv run --no-project --quiet "{entry}" remember --rule "<text>"` (same for remember --profile, approve setup, depth 3,
 secret ask NAME, forget). Never put the path in a variable, never chain two with && or ;, never wrap it: the user sees
@@ -546,8 +548,8 @@ def setup_answer(prompt: str) -> str | None:
         return None
     db = memory.connect()
     try:
-        for rule in GUARDRAILS:
-            memory.add(db, "rule", "setup", rule)
+        for i, rule in enumerate(GUARDRAILS):
+            memory.add(db, "rule", f"setup:{i}", rule)  # one source per rule: the index lists one item per source
     finally:
         db.close()
     s["pending"] = ["purpose"]  # a bare yes covers the guardrails and the wider look, not who the user is
@@ -574,6 +576,36 @@ def note_correction(db, session: str, prompt: str) -> int | None:
     return memory.add(db, "rule", f"said:{session}", text)
 
 
+def record_answers(db, path: str) -> None:
+    """What the user answered through the question tool is Lantern's to keep: the machine's purpose becomes the profile,
+    chosen guardrails become rules, and the setup stops being pending, whether or not the model ran a command for it."""
+    s = discovery.settings()
+    seen = set(s.get("answers_seen") or [])
+    pending = s.get("pending") or []
+    changed = False
+    for q, a in transcript.answers(path):
+        mark = hashlib.sha1(f"{q}={a}".encode()).hexdigest()[:12]
+        if mark in seen:
+            continue
+        seen.add(mark)
+        changed = True
+        ql = q.lower()
+        if "guardrail" in ql or "rule" in ql:
+            for i, rule in enumerate(re.split(r"(?<=\.)\s*,\s*|\s*;\s*", a)):
+                if 12 <= len(rule.strip()) <= 300 and rule.strip() not in memory.rules(db, 20000):
+                    memory.add(db, "rule", f"setup:{mark}:{i}", rule.strip())  # one source per rule: the index lists one per source
+            pending = [x for x in pending if x != "guardrails"]
+        elif re.search(r"machine|computer|this box|is for|used for", ql) and not memory.profile(db, 4000):
+            guess = re.split(r"\.?\s*(?:Is (?:that|this) (?:right|correct)|Right\?|Correct\?)", q)[0]
+            guess = re.sub(r"^.*?(?:my guess is|looks like it's|looks like|it seems)\s*(?:that\s*)?", "", guess, flags=re.I).strip()
+            if re.match(r"(?i)yes|that's (?:it|right)|correct|mostly", a) and len(guess) >= 12:
+                memory.add(db, "profile", "setup", guess[0].upper() + guess[1:])
+            pending = [x for x in pending if x != "purpose"]
+    if changed:
+        discovery.save_settings({**discovery.settings(), "answers_seen": sorted(seen)[-200:], "pending": pending,
+                                 **({"answered_at": time.time()} if pending != (s.get("pending") or []) else {})})
+
+
 def stop(payload: dict) -> dict | None:
     turn = transcript.last_turn(payload.get("transcript_path", ""))
     if not turn["user"] or _is_system(turn["user"]):
@@ -581,6 +613,7 @@ def stop(payload: dict) -> dict | None:
     db = memory.connect()
     try:
         _store_turn(db, payload.get("session_id", "?"), payload.get("cwd") or "", turn)
+        record_answers(db, payload.get("transcript_path", ""))
     finally:
         db.close()
     return None
@@ -590,6 +623,8 @@ _UNCHECKED = re.compile(r"\bI (?:didn't|did not|couldn't|could not|haven't|have 
                         r"(?:check|verify|confirm|look at|look into|read|inspect|see|test)\b[^.\n]{0,160}", re.I)
 _HANDS_OFF = re.compile(r"I don't know the state of your (?:machine|computer|system)|run it yourself|so you can (?:approve|run) it"
                         r"|here is what it would have run|what I would have run|I couldn't check\b", re.I)
+_OFFERED_READ = re.compile(r"\b(?:Should I|Shall I|Want me to|Do you want me to|Say the word and I'll) (?:run|check|read|look|inspect|verify|scan|list|pull)\b"
+                           r"(?![^?\n]*\b(?:restart|stop|kill|delete|remove|prune|push|install|change|edit|write|enable|disable)\b)[^?\n]{0,140}\?", re.I)
 SNAPSHOT_FRESH_S = 2 * 3600
 
 
@@ -608,13 +643,17 @@ def stop_nudge(payload: dict) -> dict | None:
                 "two hours, and their findings are in your context (the Stage, the watches line, the since-last block). Add a short "
                 "follow-up that answers from them in plain words: what is failing, what is fine, what changed. No commands for the "
                 "user to run, no 'I couldn't check', no 'I don't know the state'."}
+    offered = _OFFERED_READ.search(turn["reply"])
+    if offered:
+        return {"decision": "block", "reason": "Your reply offers a read-only check instead of doing it: \"" + offered.group(0).strip() + "\". "
+                "Reading never needs permission here: run it now and add one or two sentences, starting \"Checked after all:\", with what it showed."}
     gaps = _UNCHECKED.findall(turn["reply"])
     if not gaps:
         return None
     return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
-            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
-            "sentences that simply states what you found, with no 'I checked', no 'Correction' and no reference to the earlier "
-            "sentence. If nothing here can answer it, add one clause on what would."}
+            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add one or two sentences starting "
+            "\"Checked after all:\" with what it showed, so the earlier sentence reads as superseded rather than contradicted. "
+            "If nothing here can answer it, add one clause on what would."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
