@@ -85,7 +85,7 @@ class ScheduleTest(unittest.TestCase):
     entry = Path("/p/lantern.py")
 
     def test_linux_timer(self):
-        p = schedule.plan("doctor", 3, self.entry, "linux", Path("/h"))
+        p = schedule.plan("doctor", 3, self.entry, "linux", Path("/h"), scheduler="systemd")
         timer = p["files"][Path("/h/.config/systemd/user/lantern-doctor.timer")]
         self.assertIn("OnCalendar=*-*-* 03:00:00", timer)
         service = p["files"][Path("/h/.config/systemd/user/lantern-doctor.service")]
@@ -100,7 +100,7 @@ class ScheduleTest(unittest.TestCase):
 
     def test_bad_hour(self):
         with self.assertRaises(ValueError):
-            schedule.plan("doctor", 24, self.entry, "linux")
+            schedule.plan("doctor", 24, self.entry, "linux", scheduler="systemd")
 
 
     def test_inside_a_container_the_timer_is_built_for_the_host(self):
@@ -112,7 +112,7 @@ class ScheduleTest(unittest.TestCase):
             return mock.Mock(returncode=0, stdout="/home/linuxbrew/.linuxbrew/bin/uv\n")
         with mock.patch.object(discovery, "HOST_EXEC", "/usr/bin/distrobox-host-exec"), mock.patch.object(schedule.subprocess, "run", run), \
                 tempfile.TemporaryDirectory() as d:
-            p = schedule.plan("watch", None, self.entry, "linux", Path(d))
+            p = schedule.plan("watch", None, self.entry, "linux", Path(d), scheduler="systemd")
             self.assertIn("ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run", next(iter(p["files"].values())))  # the host's uv, not the box's
             schedule.apply(p)
             self.assertIn("OnCalendar=hourly", (Path(d) / ".config/systemd/user/lantern-watch.timer").read_text())

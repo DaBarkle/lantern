@@ -99,7 +99,7 @@ class AlertsTest(unittest.TestCase):
         self.assertIn("hourly check scheduled", alerts.status())
 
     def test_hourly_schedule(self):
-        p = schedule.plan("watch", None, Path("/p/lantern.py"), "linux", Path("/h"))
+        p = schedule.plan("watch", None, Path("/p/lantern.py"), "linux", Path("/h"), scheduler="systemd")
         self.assertIn("OnCalendar=hourly", p["files"][Path("/h/.config/systemd/user/lantern-watch.timer")])
         self.assertIn("<key>StartInterval</key><integer>3600</integer>",
                       next(iter(schedule.plan("watch", None, Path("/p/lantern.py"), "darwin", Path("/h"))["files"].values())))

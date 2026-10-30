@@ -27,14 +27,51 @@ def _launcher(entry: Path, job: str, data: Path | None = None) -> list[str]:
     return [_uv(), "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
 
 
+def _host(argv: list[str]) -> list[str]:
+    return [discovery.HOST_EXEC, *argv] if discovery.HOST_EXEC and argv[0] in discovery.HOST_TOOLS else argv
+
+
+def linux_scheduler() -> str | None:
+    """"systemd" when this user has a systemd session to talk to, else "cron" when crontab is here, else None (a container
+    or a minimal box: nothing to schedule with; callers fall back to in-session checks)."""
+    try:
+        if subprocess.run(_host(["systemctl", "--user", "show-environment"]), capture_output=True, timeout=10).returncode == 0:
+            return "systemd"
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "cron" if discovery._which("crontab") else None
+
+
+def _cron_plan(job: str, hour: int | None, argv: list[str], data: Path) -> dict:
+    """The user's crontab with this job's line replaced (marked by a trailing comment), written to a file that
+    `crontab FILE` installs: argv only, no stdin, so apply() runs it like any other command."""
+    mark = f"# lantern-{job}"
+    try:
+        r = subprocess.run(_host(["crontab", "-l"]), capture_output=True, text=True, timeout=10)
+        current = [l for l in r.stdout.splitlines() if not l.rstrip().endswith(mark)] if r.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):
+        current = []
+    when = "0 * * * *" if hour is None else f"0 {hour} * * *"
+    line = f"{when} {subprocess.list2cmdline(argv)} >/dev/null 2>&1 {mark}"  # cron would otherwise mail every run's output
+    path = data / "crontab"
+    return {"files": {path: "\n".join(current + [line]) + "\n"}, "commands": [["crontab", str(path)]]}
+
+
 def plan(job: str, hour: int | None, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
-         data: Path | None = None) -> dict:
-    """Daily job at `hour`:00 local time, or hourly when `hour` is None. Returns {"files": {path: text}, "commands": [[argv], ...]}."""
+         data: Path | None = None, scheduler: str | None = None) -> dict:
+    """Daily job at `hour`:00 local time, or hourly when `hour` is None. Returns {"files": {path: text}, "commands": [[argv], ...]}.
+    On Linux the scheduler is probed unless given: systemd user timers where this user has a session, else cron."""
     if hour is not None and not 0 <= hour <= 23:
         raise ValueError(f"hour must be 0-23, got {hour}")
     argv = _launcher(entry, job, data)
     name = f"lantern-{job}"
     every = "hourly" if hour is None else "daily"
+    if platform not in ("win32", "darwin"):
+        scheduler = scheduler or linux_scheduler()
+        if scheduler == "cron":
+            return _cron_plan(job, hour, argv, data or home / ".local" / "share" / "lantern")
+        if scheduler is None:
+            raise OSError("no scheduler on this machine: no systemd user session and no crontab")
     if platform == "win32":
         return {"files": {}, "commands": [[
             "schtasks", "/Create", "/F", "/SC", *(["HOURLY"] if hour is None else ["DAILY", "/ST", f"{hour:02d}:00"]),
@@ -71,6 +108,4 @@ def apply(p: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     for argv in p["commands"]:
-        if discovery.HOST_EXEC and argv[0] in discovery.HOST_TOOLS:
-            argv = [discovery.HOST_EXEC, *argv]  # the container's systemctl cannot reach the host's user manager
-        subprocess.run(argv, check=True)
+        subprocess.run(_host(argv), check=True)  # the container's systemctl or crontab cannot reach the host's; ask the host

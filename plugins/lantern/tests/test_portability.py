@@ -117,5 +117,39 @@ class KeychainTest(unittest.TestCase):
             self.assertEqual(paths.ensure_data_dir().stat().st_mode & 0o777, 0o700)
 
 
+
+class CronTest(unittest.TestCase):
+    """Linux without a systemd user session (WSL, servers over SSH, Alpine): the jobs go into the user's crontab."""
+
+    def test_cron_plan_replaces_only_its_own_line(self):
+        from lantern_core import schedule
+
+        def run(argv, **kw):
+            if argv[:2] == ["crontab", "-l"]:
+                return mock.Mock(returncode=0, stdout="MAILTO=me\n0 2 * * * /usr/bin/backup # mine\n0 * * * * old # lantern-watch\n")
+            return mock.Mock(returncode=1, stdout="")
+        with mock.patch.object(schedule.subprocess, "run", run), mock.patch.object(schedule.discovery, "HOST_EXEC", None):
+            p = schedule.plan("watch", None, Path("/p/lantern.py"), "linux", Path("/h"), data=Path("/d"), scheduler="cron")
+            text = p["files"][Path("/d/crontab")]
+            self.assertIn("MAILTO=me\n0 2 * * * /usr/bin/backup # mine\n", text)
+            self.assertNotIn("old", text)
+            self.assertRegex(text, r"\n0 \* \* \* \* \S*uv run --no-project --quiet /p/lantern.py job watch --data /d >/dev/null 2>&1 # lantern-watch\n$")
+            self.assertEqual(p["commands"], [["crontab", "/d/crontab"]])
+            daily = schedule.plan("curate", 3, Path("/p/lantern.py"), "linux", Path("/h"), data=Path("/d"), scheduler="cron")
+            self.assertIn("\n0 3 * * * ", daily["files"][Path("/d/crontab")])
+
+    def test_scheduler_is_probed_when_not_named(self):
+        from lantern_core import schedule
+        with mock.patch.object(schedule.subprocess, "run", side_effect=OSError), mock.patch.object(schedule.discovery, "HOST_EXEC", None):
+            with mock.patch.object(schedule.discovery, "_which", return_value="/usr/bin/crontab"):
+                self.assertEqual(schedule.linux_scheduler(), "cron")
+            with mock.patch.object(schedule.discovery, "_which", return_value=None):
+                self.assertIsNone(schedule.linux_scheduler())
+                with self.assertRaises(OSError):  # alerts.ensure_scheduled catches this and falls back to in-session checks
+                    schedule.plan("watch", None, Path("/p/lantern.py"), "linux", Path("/h"), data=Path("/d"))
+        with mock.patch.object(schedule.subprocess, "run", return_value=mock.Mock(returncode=0)), mock.patch.object(schedule.discovery, "HOST_EXEC", None):
+            self.assertEqual(schedule.linux_scheduler(), "systemd")
+
+
 if __name__ == "__main__":
     unittest.main()

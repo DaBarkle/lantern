@@ -71,7 +71,7 @@ def _which(name: str) -> str | None:
         return None
 
 
-HOST_TOOLS = {"systemctl", "podman", "docker", "flatpak", "virsh", "tailscale", "lspci", "wg", "zerotier-cli"}
+HOST_TOOLS = {"systemctl", "crontab", "podman", "docker", "flatpak", "virsh", "tailscale", "lspci", "wg", "zerotier-cli"}
 
 
 REFUSED = re.compile(r"permission denied|not permitted|access denied|authorization|connect: no such file", re.I)

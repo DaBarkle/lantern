@@ -26,7 +26,7 @@ traceback is shown. After this audit nothing known breaks except the missing-uv 
 | Discovery: apps | Flatpak | none | Homebrew casks | winget (English column headers only; other locales yield nothing) | Linux live; others mocked |
 | Discovery: containers | docker, podman | same | same | same | Linux live |
 | Tool output decoding | UTF-8 with replacement | same | same | same (console code page no longer matters) | mocked |
-| Scheduled jobs | systemd user timers | degrades: `ensure_scheduled` falls back to session-start and nightly checks; status says "not scheduled here" | launchd | Task Scheduler | Linux live; others mocked, no cron fallback yet |
+| Scheduled jobs | systemd user timers | the user's crontab (`crontab -l` merged, `crontab FILE`); with neither, `ensure_scheduled` falls back to session-start and nightly checks and status says "not scheduled here" | launchd | Task Scheduler | Linux systemd live; cron, mac and win mocked |
 | Jobs started from a session | detached `uv run` (uv found via `$UV`, then PATH) | same | same | `DETACHED_PROCESS` | Linux live |
 | Memory server (fastembed, onnxruntime) | works; exits after 30 min idle | works | works on Intel and Apple silicon | works on x64; ARM64 Windows likely no wheel | Linux live; others untested |
 | Memory server cannot start (no wheel, reserved port, no network for the model download) | degrades: stderr in `serve.log`, doctor says "did not come up ... recall is keyword-only" | same | same | same | mocked |
@@ -44,8 +44,7 @@ traceback is shown. After this audit nothing known breaks except the missing-uv 
 
 ## What remains
 
-- No cron fallback where systemd is absent (WSL, servers over SSH): the hourly watch then runs only at session start and
-  from the nightly doctor if that is scheduled some other way.
+- The cron fallback writes the crontab but cannot start a cron daemon; on WSL cron is often installed and not running.
 - winget's table parser needs English headers.
 - No failed-service or backup-job watch on macOS and Windows yet (launchd and Task Scheduler expose it; nothing reads it).
 - Nothing in this table has run on a real Mac or Windows machine; CI runners cover the unit tests only.
