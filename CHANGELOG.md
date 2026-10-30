@@ -4,6 +4,8 @@
 
 The first release that sets itself up, looks after itself, and knows your machine.
 
+- Register: plain words by default; Lantern learns from your own messages whether you want paths and unit names, and uses your names for things ("the plex thing") in its status line and replies. A guess carried from one session to the next stays marked as a guess.
+
 - First session: discovery, insights and a read-only survey run before the first reply; onboarding is a short conversation, never a settings page.
 - Memory: ledger, same-turn rules, patterns, subagent capture, recall fused from keyword and meaning with recency; a correction becomes a rule as you type it.
 - Stage: open findings in one place, with what changed since last session.

@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, alerts, discovery, doctor, insights, jobs, memory, packs, resources, semantic, shield, stage, statusline, survey, transcript
+from . import __version__, alerts, discovery, doctor, insights, jobs, memory, packs, register, resources, semantic, shield, stage, statusline, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -24,6 +24,7 @@ TOP_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = memory.RESUME_HOURS
 AGENT_CHARS = 1500
+CARRY_CHARS = 1500  # a last exchange carried into the next session; hedged sentences survive the cut whole
 SHORT_PROMPT_TERMS = 8  # below this, the session's own names join the recall query
 # A correction holds from the moment it is said, not from tomorrow's curation.
 # Only openings that state a standing preference. "Stop the container" or "make sure you restart it" are tasks for now.
@@ -231,9 +232,7 @@ def session_start(payload: dict) -> dict | None:
         lines += [f"In the user's own words (README of a recent project): {snippet}"]
     if discovery.frontier_block():
         lines += ["", discovery.frontier_block()]
-    level = discovery.expertise()
-    lines += ["Write for an expert: paths, units and line numbers inline, mechanism stated plainly." if level == "expert" else
-              "Write for a non-technical reader: consequence first in plain words, mechanism in one clause, paths in a trailing details line."]
+    lines += [register.guidance()]
     if not first and not profile and no_rules:
         lines += ["Open loop: the user has not yet said what this machine is for or chosen any guardrail. Assume until told: "
                   "personal and finance folders never leave this machine; ask before restarting a service or changing the OS. "
@@ -266,9 +265,9 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", f"Where the user's last session {where} left off ({time.strftime('%Y-%m-%d', time.localtime(previous['updated']))}):"]
         lines += memory.ledger_lines(previous)
         if tail:
-            lines += [f"- Last exchange: {tail[-1]['text'][:1500]}"]  # long enough to keep a hedge ("it's a guess, because...")
+            lines += [f"- Last exchange: {memory.carry(tail[-1]['text'], CARRY_CHARS)}"]
     elif tail:
-        lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:1500]}" for p in tail]
+        lines += ["", "Where the user's last session left off:"] + [f"- {memory.carry(p['text'], CARRY_CHARS)}" for p in tail]
     if attention:
         lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour; a finding's text is its "
                   "evidence, cite it rather than saying you have not read the log):", attention]
@@ -298,7 +297,7 @@ def session_start(payload: dict) -> dict | None:
     if tail_block and not first:
         stored = memory_rules_count
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
-                  "these lines, using their counts and reasons word for word; never split a count into parts of your own; name every "
+                  "these lines, using their counts and reasons word for word (names of things as the register line above says); never split a count into parts of your own; name every "
                   "item in a 'Found on this machine' line; then answer):"] + tail_block
         lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
                   "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
@@ -357,7 +356,7 @@ def capture_previous(payload: dict) -> None:
 
 
 def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
-    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {turn['reply'][:CAPTURE_CHARS]}"
+    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {memory.carry(turn['reply'], CAPTURE_CHARS)}"
     acts = [f"edited {', '.join(turn['files'][-6:])}" if turn["files"] else "",
             f"ran {'; '.join(turn['commands'][-4:])}" if turn["commands"] else "",
             f"{turn['failed']} tool call(s) failed" if turn["failed"] else ""]
@@ -371,26 +370,12 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
 _REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
 
 
-_PLAIN_WORDS = re.compile(r"\b(?:the \w+ thing|keep it simple|plain (?:words|english)|not (?:very )?technical|non-technical|what does that mean|"
-                          r"in simple terms|explain (?:it )?like|I'm not a (?:techie|developer|programmer|computer person)|just fix it)\b", re.I)
-_EXPERT_WORDS = re.compile(r"(?:^|\s)(?:~/|/etc/|/var/|systemctl|journalctl|podman|docker|git (?:status|log|diff|rebase)|\S+\.(?:service|timer)\b)|`[^`]{3,}`")
-
-
-def reader_level(prompt: str) -> None:
-    """The user's own words outrank what the machine suggests: "the plex thing" is a non-technical reader however many
-    services run here; a pasted unit name or path is an expert."""
-    if _PLAIN_WORDS.search(prompt):
-        discovery.save_settings({**discovery.settings(), "expertise": "general"})
-    elif _EXPERT_WORDS.search(prompt) and discovery.settings().get("expertise") != "general":
-        discovery.save_settings({**discovery.settings(), "expertise": "expert"})
-
-
 def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
     capture_previous(payload)
-    reader_level(prompt)
+    register.learn(prompt)
     answered = setup_answer(prompt)
     name, stored = shield.paste(prompt)
     if name:  # a secret handed over in chat: this message never reaches the model, stored or not

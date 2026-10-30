@@ -201,7 +201,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["failed"] += turn.get("failed", 0)
     d["turns"] += 1
     d["last"] = turn["user"][:400]
-    d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
+    d["reply"] = carry(turn.get("reply", ""), 600)  # the end carries the next steps; hedged sentences are kept whole
     kept = [l for l in d.get("loops", []) if not addresses(turn.get("reply", ""), l)]  # done, re-asked or retired
     d["loops"] = list(dict.fromkeys(kept + open_loops(turn.get("reply", ""))))[-LOOPS_KEEP:]
     with db:
@@ -215,6 +215,27 @@ _SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or versio
 _LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
                    r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
                    r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me if|Say the word|If you want me to|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
+
+
+_HEDGE = re.compile(r"\b(?:guess\w*|couldn't|could not|can't (?:confirm|verify|tell|check|read)|cannot (?:confirm|verify|tell|check|read)|unverified|"
+                    r"unconfirmed|not (?:sure|certain|verified|confirmed)|likely|probably|possibly|perhaps|may be|might be|I think|I suspect|"
+                    r"seems|appears|assum\w+|was declined|didn't check|haven't checked)\b", re.I)
+HEDGE_SENTENCE = 300
+
+
+def carry(text: str, limit: int) -> str:
+    """Shorten a reply to about limit characters without losing its hedges: the opening, every sentence that marks a claim
+    as a guess or as unchecked, and the ending are kept whole, and the result says the guesses are guesses. A plain
+    cut once dropped "It's a guess, because I couldn't read Plex's own error log", and the next day stated it as fact."""
+    if len(text) <= limit:
+        return text
+    head, tail = text[:limit // 3], text[-(limit // 3):]
+    hedged = [s.strip()[:HEDGE_SENTENCE] for s in re.split(r"(?<=[.!?])\s+|\n+", text) if _HEDGE.search(s)]
+    middle = " ".join(s for s in hedged if s not in head and s not in tail)
+    out = head + " [...] " + (middle + " [...] " if middle else "") + tail
+    if hedged:
+        out += " (hedged: the guesses above stay guesses; say what was not checked rather than stating a cause as fact)"
+    return out
 
 
 def open_loops(reply: str, limit: int = 8) -> list[str]:

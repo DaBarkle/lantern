@@ -219,16 +219,6 @@ def readme_snippets(limit: int = 2) -> list[str]:
     return out
 
 
-def expertise() -> str:
-    """A reader level inferred from the machine: someone running services and many dev tools is an expert."""
-    s = settings()
-    if s.get("expertise"):
-        return s["expertise"]
-    caps = s.get("capabilities", {})
-    kinds = [c.split(":", 1)[0] for c in caps]
-    return "expert" if kinds.count("tool") >= 8 or kinds.count("service") + kinds.count("container") >= 3 else "general"
-
-
 def scout_tools() -> list[dict]:
     out = []
     for t in DEV_TOOLS:

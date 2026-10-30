@@ -113,13 +113,38 @@ class LedgerTest(unittest.TestCase):
     def test_reader_level_follows_the_users_words(self):
         with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
             Path(self.tmp.name, "settings.json").write_text("{}")
-            hooks.reader_level("is the plex thing ok? keep it simple")
-            self.assertEqual(hooks.discovery.expertise(), "general")
-            hooks.reader_level("check ~/.config/systemd/user/plex.service")
-            self.assertEqual(hooks.discovery.expertise(), "general")  # a path once does not undo "keep it simple"
+            from lantern_core import register
+            register.learn("is the plex thing ok? keep it simple")
+            self.assertEqual(register.level(), "plain")
+            register.learn("check ~/.config/systemd/user/plex.service")
+            self.assertEqual(register.level(), "plain")  # a path once does not undo "keep it simple"
+            self.assertIn("no unit names, paths, commands", register.guidance())
+            Path(self.tmp.name, "settings.json").write_text(json.dumps({"capabilities": {"container:plex": {"name": "plex"}}}))
+            self.assertEqual(register.level(), "plain")  # unsure means plain, whatever the machine runs
+            register.learn("please don't restart the plex thing without asking")
+            self.assertEqual(register.names(), {"plex": "the plex thing"})
+            self.assertIn('"the plex thing" for plex', register.guidance())
+            self.assertEqual(register.say("container-plex.service has failed; lantern-curate.timer missed"),
+                             "the plex thing has failed; the lantern-curate job missed")
+            self.assertEqual(register.say("Plex is down"), "the plex thing is down")
             Path(self.tmp.name, "settings.json").write_text("{}")
-            hooks.reader_level("journalctl --user -u plex.service -n 20 please")
-            self.assertEqual(hooks.discovery.expertise(), "expert")
+            register.learn("journalctl --user -u plex.service -n 20 please")
+            self.assertEqual(register.level(), "expert")
+            self.assertIn("paths, units and line numbers inline", register.guidance())
+            register.learn("I'm a developer, give me the details")
+            self.assertEqual(register.level(), "expert")
+
+    def test_carry_keeps_hedges_whole_past_the_cut(self):
+        from lantern_core import memory
+        body = "The log is full of decoder lines. " * 30
+        reply = body + "It's a guess, because I couldn't read Plex's own error log: that command was declined. " + body + "Next, I can check the container."
+        short = memory.carry(reply, 600)
+        self.assertLess(len(short), 1100)
+        self.assertIn("It's a guess, because I couldn't read Plex's own error log", short)
+        self.assertIn("Next, I can check the container.", short)
+        self.assertIn("guesses above stay guesses", short)
+        self.assertEqual(memory.carry("short and sure.", 600), "short and sure.")
+        self.assertNotIn("hedged", memory.carry(body * 3, 600))
 
     def test_ledger_keeps_the_folder_the_session_started_in(self):
         db = memory.connect()
