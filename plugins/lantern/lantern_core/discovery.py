@@ -195,6 +195,19 @@ def scout_tools() -> list[dict]:
     return out
 
 
+def scout_timers() -> list[dict]:
+    """The user's own scheduled jobs (systemd user timers), so a new one is noticed like any other capability."""
+    out = []
+    for line in _run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"]).splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        timer = parts[-2] if len(parts) >= 2 and parts[-2].endswith(".timer") else next((p for p in parts if p.endswith(".timer")), "")
+        if timer:
+            out.append({"id": f"timer:{timer}", "kind": "timer", "name": timer, "detail": "systemd user timer", "check": None})
+    return out
+
+
 def scout_vms() -> list[dict]:
     names = [n for n in _run(["virsh", "-c", "qemu:///system", "list", "--all", "--name"]).split() if n]
     return [{"id": f"vm:{n}", "kind": "vm", "name": n, "detail": "libvirt virtual machine", "check": {"type": "vm", "name": n}} for n in names]
@@ -274,7 +287,7 @@ def scout_vpn() -> list[dict]:
 
 
 SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets, scout_alerts],
-          3: [scout_containers, scout_vms, scout_services, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
+          3: [scout_containers, scout_vms, scout_services, scout_timers, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
 
 
 def discover(depth: int) -> list[dict]:
@@ -335,7 +348,7 @@ PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "l
 
 
 KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
-               "service": "services", "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN",
+               "service": "services", "timer": "scheduled jobs", "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN",
                "secret-manager": "password managers", "alert-channel": "alert channels"}
 
 
@@ -360,7 +373,7 @@ def summary() -> str:
     for cid, c in caps.items():
         kinds.setdefault(cid.split(":", 1)[0], []).append(c["name"])
     labels = {"system": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
-              "service": "services", "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers", "alert": "alert channels to the user"}
+              "service": "services", "timer": "scheduled jobs", "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers", "alert": "alert channels to the user"}
     parts = []
     for k, names in kinds.items():
         if k == "system":

@@ -235,27 +235,35 @@ def session_start(payload: dict) -> dict | None:
     elif tail:
         lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
     if attention:
-        lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour):", attention]
+        lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour; a finding's text is its "
+                  "evidence, cite it rather than saying you have not read the log):", attention]
+    tail_block = []
     if moved:
-        lines += [moved]
+        tail_block += [moved]
     if found_new:
-        lines += [found_new]
-    lines += [open_block]
+        tail_block += [found_new]
+    tail_block += [open_block]
     if not first:
         at = discovery.settings().get("insights_at")
-        lines += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
+        tail_block += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
                   f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}. Duties beyond these "
                   "watches are proposals until the user says yes; say which are active and which are only proposed."]
         pending = discovery.settings().get("pending") or []
         if discovery.settings().get("answered_at") and not pending:
-            lines += ["The setup questions were answered (guardrails and profile above are in force)."]
+            tail_block += ["The setup questions were answered (guardrails and profile above are in force)."]
         elif discovery.settings().get("answered_at"):
-            lines += ["The guardrails were accepted; what this machine is for was never confirmed: state your reading of it in one "
-                      "line and ask once whether it is right (then store it with `remember --profile`)."]
+            tail_block += ["The guardrails were accepted; what this machine is for was never confirmed: state your reading of it in one "
+                           "line and ask once whether it is right (then store it with `remember --profile`)."]
         elif pending:
-            lines += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
+            tail_block += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
     lines += ["", f"Now: {time.strftime('%Y-%m-%d %H:%M %Z')}."]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS))]
+    if tail_block and not first:
+        lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
+                  "these lines, using their counts and reasons word for word, then answer):"] + tail_block
+        if previous and previous.get("loops"):
+            lines += ["Open loops from the last session, each to be done now, re-asked once, or retired with a reason: "
+                      + "; ".join(previous["loops"])]
     return _context("SessionStart", "\n".join(lines))
 
 
