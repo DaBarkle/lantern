@@ -220,13 +220,19 @@ def paste(prompt: str) -> tuple[str | None, bool]:
     else:
         return None, False
     (ensure_data_dir() / "secret-ask.json").unlink(missing_ok=True)
+    return name, store(name, value)
+
+
+def store(name: str, value: str) -> bool:
+    """Put a value in the keychain under NAME, through `secret set` with keyring available; the value travels on stdin
+    and is never printed or logged. False when this session has no keychain."""
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lantern.py")
     try:
         r = subprocess.run([uv(), "run", "--no-project", "--quiet", "--with", "keyring", script, "secret", "set", name],
                            input=value, capture_output=True, text=True, timeout=60, env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())})
-        return name, r.returncode == 0
+        return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        return name, False
+        return False
 
 
 def cli(argv: list[str]) -> int:
