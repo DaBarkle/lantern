@@ -134,6 +134,9 @@ def answer(question: dict) -> str:
         chosen = pick(r"\b(no|not now|skip|later)\b") or labels[-1]
     elif "plex" in q:
         chosen = pick(r"server|container|quadlet") or labels[0]  # the rule and the parents' stream are about the server
+    elif re.search(r"\b(edit|apply|write|commit|make the change|fix it|go ahead|proceed|install|add .* to)\b", q):
+        # the simulated user never approves changes to real files, so the answer must match what the policy will allow
+        chosen = pick(r"show|draft|not now|later|no\b|skip|just tell") or labels[-1]
     elif question.get("multiSelect"):
         return ", ".join(labels[:2])
     else:
@@ -182,7 +185,8 @@ class Session:
             path = Path(inp.get("file_path") or inp.get("notebook_path") or "/")
             if self.cwd in path.resolve().parents:
                 return {"behavior": "allow", "updatedInput": inp}
-            return {"behavior": "deny", "message": f"David declined this edit; today he only wants edits inside {self.cwd}. Show the change instead."}
+            return {"behavior": "deny", "message": "David has not approved changes to his real files; show the change and he will apply "
+                    "it himself when ready. (Scratch work inside the current folder needs no approval.)"}
         if tool in ("Read", "Glob", "Grep", "Agent", "TodoWrite", "ExitPlanMode", "Skill"):
             return {"behavior": "allow", "updatedInput": inp}
         return {"behavior": "deny", "message": f"The user declined {tool} in this session."}
@@ -263,4 +267,6 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
     assert answer({"question": "Is this right?", "options": [{"label": "Change it"}, {"label": "Yes, that's right"}]}) == "Yes, that's right"
     assert answer({"question": "Which Plex is stuck?", "options": [{"label": "Desktop app"}, {"label": "Plex Media Server (container)"}]}).startswith("Plex Media Server")
+    assert answer({"question": "Apply the backup edit now?", "options": [{"label": "Yes, everything"}, {"label": "Show me the change first"}]}) == "Show me the change first"
+    assert answer({"question": "Which guardrails should I keep?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}]}) == "A, B"
     print("ok")
