@@ -79,7 +79,7 @@ def _trend(u) -> str:
     today = time.strftime("%Y-%m-%d")
     if not series or series[-1][0] != today:
         series = (series + [[today, u.total - u.free]])[-60:]
-        discovery.save_settings({**discovery.settings(), "disk_series": series})
+        discovery.update_settings(disk_series=series)
     if len(series) < 2:
         return ""
     days = max(1, (time.mktime(time.strptime(series[-1][0], "%Y-%m-%d")) - time.mktime(time.strptime(series[0][0], "%Y-%m-%d"))) / 86400)
@@ -109,7 +109,7 @@ def unit_secrets() -> list[tuple[str, str, float]]:
 def down(caps: dict) -> list[tuple[str, str, float]]:
     """Known services, containers, VMs and local servers that are not up right now."""
     return [(f"insight/down/{cid}", f"{c['name']} is not running", 5) for cid, c in caps.items()
-            if c.get("check") and discovery.healthy(c["check"]) is False]
+            if not cid.startswith(("repo:", "project:")) and c.get("check") and discovery.healthy(c["check"]) is False]  # a gone folder is not "down"
 
 
 def failed_units() -> list[tuple[str, str, float]]:
@@ -156,11 +156,11 @@ def timers() -> list[tuple[str, str, float]]:
     s = discovery.settings()
     seen = s.get("timers_seen")
     if seen is None:
-        discovery.save_settings({**s, "timers_seen": sorted(now)})
+        discovery.update_settings(timers_seen=sorted(now))
         return []
     new = sorted(set(now) - set(seen))
     if new:
-        discovery.save_settings({**discovery.settings(), "timers_seen": sorted(set(seen) | set(now))})
+        discovery.update_settings(timers_seen=sorted(set(seen) | set(now)))
     return [(f"insight/timer-new/{t}", f"a new scheduled job appeared: {t} (next run {now[t]}); say so once, it may be the user's own doing", 2) for t in new]
 
 
@@ -190,7 +190,7 @@ def run(db, now: float | None = None, force: bool = False) -> list[str]:
             stage.publish(db, key, "insight", msg, score=score, days=3, now=now)
         stage.resolve_source(db, "insight", {k for k, _, _ in found} | {e["key"] for e in cached})
         return [e["message"] for e in stage.top(db, k=100, now=now) if e["source"] == "insight"]
-    discovery.save_settings({**discovery.settings(), "insights_at": now})
+    discovery.update_settings(insights_at=now)
     found = repos(caps, now) + down(caps) + unit_secrets() + backups() + live()
     found.sort(key=lambda f: -f[2])
     for key, msg, score in found:
@@ -249,6 +249,13 @@ _KIND_WORDS = {"repo-risk": "uncommitted or unpushed work in", "repo-noremote": 
                "backup": "backup job problem:", "backup-ok": "backup fine:", "secret-in-unit": "a secret written in unit file"}
 
 
+def _short(key: str) -> str:
+    """The one word a reply must contain to count as naming this finding: a folder name, a unit, a service."""
+    kind, _, rest = key.removeprefix("insight/").partition("/")
+    rest = rest.split(":", 1)[-1]
+    return Path(rest).name if "/" in rest else rest
+
+
 def _name(key: str) -> str:
     """A finding named in words ("failed unit x.service"), never by its internal key."""
     kind, _, rest = key.removeprefix("insight/").partition("/")
@@ -262,8 +269,7 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     resolved plus one new; the counts and the lists come from the same sets."""
     s = discovery.settings()
     before = set(s.get("insights", []))
-    s["insights"] = sorted(found_keys)
-    discovery.save_settings(s)
+    discovery.update_settings(insights=sorted(found_keys))
     if not before:
         return ""
     old: dict[str, set[str]] = {}
@@ -276,8 +282,7 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     back = [k for k in resolved if _present(k)]  # the cache says gone, the machine says it is back
     resolved = [k for k in resolved if k not in back]
     if back:
-        s["insights"] = sorted(found_keys | set(back))
-        discovery.save_settings(s)
+        discovery.update_settings(insights=sorted(found_keys | set(back)))
     new = sorted(k for subj in cur.keys() - old.keys() for k in cur[subj])
     changed = sorted(k for subj in old.keys() & cur.keys() if old[subj] != cur[subj] for k in old[subj])
     unchanged = len(old.keys() & cur.keys()) - len(changed)
@@ -289,6 +294,7 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
         counts.append(f"{len(back)} back again")
     counts.append(f"{unchanged} unchanged")
     at = s.get("insights_at")
+    discovery.update_settings(since_last={"names": sorted({_short(k) for k in new + resolved + changed + back}), "at": time.time()})
     line = "Since the last session: " + ", ".join(counts) + (f" (watches last ran at {time.strftime('%H:%M', time.localtime(at))})." if at else ".")
     if back:
         line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back) + "."

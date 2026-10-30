@@ -186,6 +186,8 @@ class LedgerTest(unittest.TestCase):
         self.assertIsNone(call("systemctl --user restart container-plex.service"))  # quoted this turn: the go-ahead stands
         self.assertEqual(memory.open_loops("Say which of these duties to take on. The most useful next step is a local backup."),
                          ["Say which of these duties to take on", "The most useful next step is a local backup"])
+        self.assertEqual(memory.open_loops("Plex is up. One of Plex's own helper processes looks stuck, with 7 MB waiting to be read."),
+                         ["One of Plex's own helper processes looks stuck, with 7 MB waiting to be read"])  # a problem Lantern saw is tracked too
 
     def test_question_tool_answers_are_kept_by_lantern(self):
         p = Path(self.tmp.name) / "t.jsonl"
@@ -235,6 +237,27 @@ class LedgerTest(unittest.TestCase):
             ctx = self.call("session-start", {"session_id": "d3", "source": "startup", "cwd": "/proj"})["hookSpecificOutput"]["additionalContext"]
         self.assertNotIn("was never confirmed", ctx)
         self.assertIn("The setup questions were answered", ctx)
+
+    def test_first_reply_names_every_since_last_item(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("what changed?"), assistant("Since last session: 1 resolved, 1 new. The new one is simrepo, which has no remote.")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["lantern-sim-fail.service", "simrepo"], "at": time.time()}}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+            self.assertIn("Not named yet: lantern-sim-fail.service", out["reason"])
+            write(p, [user("what changed?"), assistant("lantern-sim-fail.service is resolved and simrepo is new.")])
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
+            write(p, [user("hi"), assistant("Hello."), user("what changed?"), assistant("Nothing much.")])
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # only the first reply is held to it
+
+    def test_a_background_accept_does_not_clobber_session_settings(self):
+        from lantern_core import discovery
+        with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text(json.dumps({"insights": ["insight/failed/x.service"], "insights_at": 5}))
+            with mock.patch.object(discovery.packs, "for_finds", return_value=None) if hasattr(discovery, "packs") else mock.patch.dict({}, {}):
+                discovery.accept([{"id": "tool:sh", "kind": "tool", "name": "sh", "detail": "/bin", "check": {"type": "tool", "name": "sh"}}])
+            s = discovery.settings()
+        self.assertEqual(s["insights"], ["insight/failed/x.service"])  # the scout wrote only its own key
+        self.assertIn("tool:sh", s["capabilities"])
 
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
