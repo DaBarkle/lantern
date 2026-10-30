@@ -27,7 +27,7 @@ PLAIN = {"ls", "cat", "head", "tail", "wc", "stat", "file", "df", "du", "free", 
 SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch", "stash", "ls-files", "describe", "config", "tag", "worktree"},
        "systemctl": {"status", "show", "cat", "list-units", "list-timers", "list-unit-files", "is-active", "is-enabled", "is-failed",
                      "list-dependencies"},
-       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top", "system"},
+       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top", "system", "healthcheck"},
        "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"},
        "virsh": {"list", "dominfo", "domstate", "domblklist", "domblkinfo", "dommemstat", "net-list", "pool-list", "vol-list"}}
 CURL_WRITES = {"-X", "--request", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-o", "--output", "-O"}
@@ -97,16 +97,16 @@ def segments(command: str) -> list[list[str]]:
 
 def allowed(command: str) -> bool:
     """Every simple command must be a read-only program or Lantern itself; no redirections to files, no substitution."""
-    if REDIRECT.search(command) or "$(" in command or "`" in command or "<(" in command:
+    if "$(" in command or "`" in command or "<(" in command:
         return False
-    try:
+    try:  # redirections are judged as tokens, so a quoted "->" or ">" inside a format string is not one
         parts = segments(re.sub(r"\d?>&\d|\d?>/dev/null|&>/dev/null", " ", command.strip()))  # harmless redirects
     except ValueError:
         return False
     names: dict[str, str] = {}
     for toks in parts:
         toks = [re.sub(r"\$\{?(\w+)\}?", lambda m: names.get(m.group(1), m.group(0)), t) for t in toks]
-        if any(t in (">", ">>", "&>", ">&") for t in toks):
+        if any(t in (">", ">>", "&>", ">&", ">|") or t.startswith(">") for t in toks):
             return False
         while toks and toks[0] in ("do", "then", "else", "done", "fi"):  # a loop or if around read-only commands is still read-only
             toks = toks[1:]
@@ -249,6 +249,7 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert allowed("for c in a b; do virsh -c $c list --all 2>/dev/null; virsh -c $c domblklist Nyx; done") and not allowed("for f in *; do rm $f; done")
     assert allowed("curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -o out.bin http://x") and allowed("git worktree list") and not allowed("git worktree add x")
     assert allowed("command -v restic borg rclone") and allowed("podman system df") and not allowed("podman system prune") and allowed("[ -f $ex ] && cat $ex")
+    assert allowed("podman inspect plex --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'") and not allowed("echo x > f") and not allowed("cat a >> b")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b." && \\\n"$L" remember --rule "c"')  # line continuation
     assert allowed("curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -s -o /tmp/x http://localhost:1/")
