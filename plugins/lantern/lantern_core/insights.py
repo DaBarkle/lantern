@@ -68,8 +68,25 @@ def disk() -> list[tuple[str, str, float]]:
         pct = 100 * (u.total - u.free) / u.total if u.total else 0
         if pct >= DISK_PCT:
             out.append((f"insight/disk/{u.total}", f"the volume holding {mount} is {pct:.0f}% full ({u.free / 1e9:.0f} GB of "
-                        f"{u.total / 1e9:.0f} GB left{_reclaimable()})", 6 if pct >= 92 else 4))
+                        f"{u.total / 1e9:.0f} GB left{_trend(u)}{_reclaimable()})", 6 if pct >= 92 else 4))
     return out
+
+
+def _trend(u) -> str:
+    """Growth per day from a daily record of used bytes, and days until full; '' until there are two days of data."""
+    s = discovery.settings()
+    series = s.get("disk_series", [])
+    today = time.strftime("%Y-%m-%d")
+    if not series or series[-1][0] != today:
+        series = (series + [[today, u.total - u.free]])[-60:]
+        discovery.save_settings({**discovery.settings(), "disk_series": series})
+    if len(series) < 2:
+        return ""
+    days = max(1, (time.mktime(time.strptime(series[-1][0], "%Y-%m-%d")) - time.mktime(time.strptime(series[0][0], "%Y-%m-%d"))) / 86400)
+    per_day = (series[-1][1] - series[0][1]) / days
+    if per_day <= 0:
+        return "; not growing lately"
+    return f"; growing {per_day / 1e9:.1f} GB/day, about {int(u.free / per_day)} days to full"
 
 
 SECRET_NAMES = re.compile(r"^\s*Environment=.*\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CLAIM)[A-Z0-9_]*)=", re.M)
@@ -100,8 +117,10 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
         unit = line.split()[0] if line.split() else ""
         if unit:
             log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
-            telling = [l for l in log if "code=" in l or "status=" in l or "timeout" in l.lower() or "error" in l.lower()]
-            cause = f": {telling[-1][:160]}" if telling else (f": last log line: {log[-1][:160]}" if log else "")
+            boiler = ("Started ", "Starting ", "Stopped ", "Stopping ", "Consumed ", "Scheduled restart", "Failed with result", "Main process exited")
+            telling = [l for l in log if not l.startswith(boiler) and not l.startswith(unit)][-3:]
+            exits = [l for l in log if "code=" in l or "status=" in l]
+            cause = (f"; last lines: " + " | ".join(t[:120] for t in telling) if telling else "") + (f"; {exits[-1][:120]}" if exits else "")
             show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
             when = show.get("InactiveEnterTimestamp", "")
             detail = f" (result {show.get('Result', '?')}, exit status {show.get('ExecMainStatus', '?')}, at {when})" if show else ""
@@ -181,6 +200,18 @@ def backups() -> list[tuple[str, str, float]]:
         elif when:
             out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when}", 1))
     return out
+
+
+def open_block(db) -> str:
+    """Every open finding by category, so a session states counts from here and never miscounts or drops one."""
+    entries = [e for e in stage.top(db, k=200) if e["source"] == "insight" and not e["key"].startswith("insight/backup-ok")]
+    if not entries:
+        return "Open findings: none."
+    groups: dict[str, list[str]] = {}
+    for e in entries:
+        groups.setdefault(e["key"].split("/")[1], []).append(e["message"].split(" (")[0].split(" has ")[0].split(" is ")[0][:60])
+    parts = [f"{len(v)} {k.replace('repo-', 'project ')}: " + ", ".join(v[:12]) for k, v in sorted(groups.items())]
+    return f"Open findings ({len(entries)}; state counts only from this line): " + " | ".join(parts) + "."
 
 
 def watch_summary(db) -> str:

@@ -428,4 +428,5 @@ class SetupAnswerTest(unittest.TestCase):
             db = memory.connect()
             hooks.stage.publish(db, "insight/failed/x.service", "insight", "x.service has failed", score=5)
             self.assertIn("failed: x.service", insights.watch_summary(db))
+            self.assertIn("Open findings (1; state counts only from this line): 1 failed: x.service", insights.open_block(db))
             db.close()

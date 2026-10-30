@@ -109,11 +109,12 @@ fix that removes the risk, and said so. A finding that disappeared is explained 
 say it "dropped off". Open a returning session's reply with two sentences: what changed since last time (from the since-last line, the
 watches line and where the last session left off) and what Lantern did about it; if nothing changed, say so. If a fact,
 priority or remedy differs from what Lantern said before, say "Correction:" with the reason; never drop a finding
-silently. When a finding reverses a choice the user made on purpose (a file or comment saying so), name that choice
-and ask before recommending its reversal. Never headline a finding whose location you do not know; ask where it lives.
+silently. When a finding conflicts with a choice the user made on purpose (a file or comment saying so), it is an accepted
+risk: never ask them to reopen it; propose the strongest mitigation that honours the choice, and mention the accepted
+risk at most as one line. Data with zero copies outranks everything else. Never headline a finding whose location you do not know; ask where it lives.
 If you cannot run something because this session has no shell, say what Lantern will do once it can, never a command
-for the user to run. Speak in the first person about your own earlier scan ("my scan
-earlier found"), never as if another agent did it. Known
+for the user to run. Speak in one first-person voice ("I"); name Lantern only in a greeting, never as a
+second agent ("Lantern has saved" -> "I've saved"). Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
@@ -161,6 +162,7 @@ def session_start(payload: dict) -> dict | None:
         learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
         no_rules = not memory.rules(db, 2000)
         watches = insights.watch_summary(db)
+        open_block = insights.open_block(db)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
@@ -225,10 +227,12 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour):", attention]
     if moved:
         lines += [moved]
+    lines += [open_block]
     if not first:
         at = discovery.settings().get("insights_at")
-        lines += [f"Lantern's watches (failed services, disk, unpushed work, known services) last ran at "
-                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}."]
+        lines += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
+                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}. Duties beyond these "
+                  "watches are proposals until the user says yes; say which are active and which are only proposed."]
         if discovery.settings().get("answered_at"):
             lines += ["The setup questions were answered (guardrails and profile above are in force)."]
         elif discovery.settings().get("pending"):
