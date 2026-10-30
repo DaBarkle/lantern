@@ -121,6 +121,14 @@ class LedgerTest(unittest.TestCase):
             hooks.reader_level("journalctl --user -u plex.service -n 20 please")
             self.assertEqual(hooks.discovery.expertise(), "expert")
 
+    def test_ledger_keeps_the_folder_the_session_started_in(self):
+        db = memory.connect()
+        memory.ledger_update(db, "d2", "/proj", {"user": "what changed", "reply": "two things", "files": [], "commands": [], "agents": [], "failed": 0})
+        memory.ledger_update(db, "d2", "/proj/simrepo", {"user": "look at simrepo", "reply": "ok", "files": [], "commands": [], "agents": [], "failed": 0})  # the model cd'd
+        self.assertEqual(memory.ledger_get(db, "d2")["cwd"], "/proj")
+        self.assertEqual(memory.previous_session(db, "d3", "/proj")["goal"], "what changed")  # day 3 resumes from day 2, not an older session
+        db.close()
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()

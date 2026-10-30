@@ -205,7 +205,8 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     kept = [l for l in d.get("loops", []) if not addresses(turn.get("reply", ""), l)]  # done, re-asked or retired
     d["loops"] = list(dict.fromkeys(kept + open_loops(turn.get("reply", ""))))[-LOOPS_KEEP:]
     with db:
-        db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
+        # cwd stays the folder the session started in: a `cd` mid-session must not make the next session in this folder skip it
+        db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
     return d
 
