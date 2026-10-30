@@ -52,8 +52,8 @@ def _ok(toks: list[str]) -> bool:
         return not any(t in CURL_WRITES or t.startswith("-X") for t in toks)  # a GET is a read
     if prog in SUB:
         words = [t for t in toks[1:] if not t.startswith("-") and "=" not in t]
-        if prog == "git" and "-C" in toks:
-            words = words[1:]  # the folder after -C
+        if (prog == "git" and "-C" in toks) or (prog == "virsh" and "-c" in toks):
+            words = words[1:]  # the folder after git -C, the URI after virsh -c
         if prog == "git" and "stash" in words:
             return words[:2] == ["stash", "list"]
         if prog == "git" and "config" in words:
