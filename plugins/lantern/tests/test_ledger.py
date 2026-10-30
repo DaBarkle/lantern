@@ -341,6 +341,8 @@ class InsightsTest(unittest.TestCase):
             with mock.patch.object(insights.discovery, "_run", return_value=""), mock.patch.object(insights, "disk", return_value=[]), \
                     mock.patch.object(insights, "unit_secrets", return_value=[]):
                 msgs = insights.real_run(db)
+                with mock.patch.object(insights, "repos", side_effect=AssertionError("re-checked within the hour")):
+                    self.assertEqual(sorted(insights.real_run(db)), sorted(msgs))  # cached, same answers
             insights.diff_since_last({f"insight/repo-risk/{dirty}", f"insight/repo-noremote/{clean}"})  # this session's findings
             subprocess.run(["git", "-C", str(dirty), "add", "-A"], check=True)
             subprocess.run(["git", "-C", str(dirty), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x"], check=True)

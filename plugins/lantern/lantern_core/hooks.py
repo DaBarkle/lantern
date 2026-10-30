@@ -97,7 +97,7 @@ EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whateve
 choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
-Findings on the Stage were checked at this session's start; when you recommend an order of fixes, rank verified data
+Findings on the Stage were checked within the last hour; when you recommend an order of fixes, rank verified data
 loss and verified secret exposure first, services down next, drift and unpinned code after, cosmetic last, and say what
 each would free or prevent; at most three numbered, the rest as "plus N smaller". Never say "I'd check" or
 "unconfirmed" about something you can read now: read it in this turn (read-only) and say what you found. A finding that
@@ -187,7 +187,7 @@ def session_start(payload: dict) -> dict | None:
     elif tail:
         lines += ["", "Where the user's last session left off:"] + [f"- {p['text'][:600]}" for p in tail]
     if attention:
-        lines += ["", "On Lantern's Stage (open findings, most pressing first, checked at this session's start):", attention]
+        lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour):", attention]
     if moved:
         lines += [moved]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry)]

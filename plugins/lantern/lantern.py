@@ -112,7 +112,7 @@ def main(argv: list[str]) -> int:
         print(f"discovered {len(discovery.auto())} new capabilities")
         db = memory.connect()
         try:
-            print(f"{len(insights.run(db))} insights")
+            print(f"{len(insights.run(db, force=True))} insights")
         finally:
             db.close()
         jobs.mark("discover", "done")

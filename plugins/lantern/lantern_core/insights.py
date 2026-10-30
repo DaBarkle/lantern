@@ -109,11 +109,20 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
     return out
 
 
-def run(db, now: float | None = None) -> list[str]:
-    """Publish every insight to Stage (replacing the last run's) and return their messages, highest first."""
-    caps = discovery.settings().get("capabilities", {})
+FRESH_SECONDS = 3600
+
+
+def run(db, now: float | None = None, force: bool = False) -> list[str]:
+    """Publish every insight to Stage (replacing the last run's) and return their messages, highest first. Checks that
+    ran within the hour are not repeated: a session start must stay quick (git status across big repos takes seconds)."""
+    s = discovery.settings()
+    caps = s.get("capabilities", {})
     if not caps:
         return []
+    now = now or time.time()
+    if not force and now - s.get("insights_at", 0) < FRESH_SECONDS:
+        return [e["message"] for e in stage.top(db, k=50, now=now) if e["source"] == "insight"]
+    discovery.save_settings({**discovery.settings(), "insights_at": now})
     found = repos(caps, now) + disk() + services(caps) + unit_secrets()
     found.sort(key=lambda f: -f[2])
     for key, msg, score in found:
