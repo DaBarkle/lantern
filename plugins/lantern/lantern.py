@@ -91,10 +91,15 @@ def main(argv: list[str]) -> int:
     if argv[:1] in (["depth"], ["discover"]):
         return discovery.cli(argv if argv[0] == "depth" else argv[1:])
     if argv == ["job", "curate"]:
+        from lantern_core import jobs
         print(f"curated {curate.run()} new rules and facts")
+        jobs.mark("curate", "done")
         return 0
     if argv == ["job", "doctor"]:
-        return doctor.cli()
+        from lantern_core import jobs
+        code = doctor.cli()
+        jobs.mark("doctor", "done")
+        return code
     if argv[:1] == ["schedule"]:
         entry = Path(__file__).resolve()
         from lantern_core.paths import data_dir

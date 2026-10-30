@@ -5,8 +5,9 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-from . import __version__, discovery, memory, semantic, shield, stage, transcript
+from . import __version__, discovery, jobs, memory, semantic, shield, stage, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -48,6 +49,8 @@ def _log(name: str, record: dict) -> None:
 
 def session_start(payload: dict) -> dict | None:
     d = ensure_data_dir()
+    if payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
+        jobs.start(jobs.due(), Path(__file__).resolve().parents[1] / "lantern.py")
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
     db = memory.connect()
     try:

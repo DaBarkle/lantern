@@ -168,3 +168,21 @@ class CurateUpdateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JobsTest(unittest.TestCase):
+    def test_due_jobs_start_once_a_day_from_session_start(self):
+        from lantern_core import jobs
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(jobs.curate, "available", return_value=True):
+            self.assertEqual(jobs.due(), ["curate", "doctor"])
+            spawned = []
+            with mock.patch.object(jobs.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
+                hooks.session_start({"session_id": "s1", "source": "startup"})
+                hooks.session_start({"session_id": "s2", "source": "startup"})  # already started: not again
+            self.assertEqual([c[-3] for c in spawned], ["curate", "doctor"])
+            self.assertIn("--data", spawned[0])
+            jobs.mark("curate", "done")
+            jobs.mark("doctor", "done")
+            self.assertEqual(jobs.due(), [])
+            self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor"])
