@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lantern_core import approvals, curate, discovery, doctor, hooks, memory, schedule, shield, stage  # noqa: E402
+from lantern_core import alerts, approvals, curate, discovery, doctor, hooks, insights, memory, schedule, shield, stage  # noqa: E402
 
 USAGE = """usage: lantern.py hook <name>
        lantern.py doctor | status
@@ -21,9 +21,10 @@ USAGE = """usage: lantern.py hook <name>
        lantern.py ssh grant HOST [--dry-run] | ssh status     (Lantern's own key, after one tap on the phone)
        lantern.py remember [--profile|--rule|--pattern] <text> | forget <query> | forget --id N | recall <query> | profile
        lantern.py approve setup | "<question>" [--timeout SECONDS]
+       lantern.py alerts [on | off | kinds failed,down,disk,backup]   (phone line per newly tripped watch)
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
-       lantern.py job curate | doctor | discover         (what the nightly schedule runs)
-       lantern.py schedule [--apply]           (show, or install, the nightly jobs)"""
+       lantern.py job curate | doctor | discover | watch   (what the schedule runs)
+       lantern.py schedule [--apply]           (show, or install, the nightly jobs and the hourly watch)"""
 
 
 def stage_cli(argv: list[str]) -> int:
@@ -91,6 +92,16 @@ def memory_cli(argv: list[str]) -> int:
     return 2
 
 
+def watch() -> list[str]:
+    """Re-check the watches now and tell the phone what newly tripped."""
+    db = memory.connect()
+    try:
+        insights.run(db, force=True)
+        return alerts.run(db)
+    finally:
+        db.close()
+
+
 def main(argv: list[str]) -> int:
     if "--data" in argv[:-1]:  # scheduled jobs: use the same data folder as the sessions
         i = argv.index("--data")
@@ -138,11 +149,15 @@ def main(argv: list[str]) -> int:
         from lantern_core import jobs
         code = doctor.cli()
         jobs.mark("doctor", "done")
+        watch()  # a machine with only the nightly jobs still hears about a tripped watch once a day
         return code
+    if argv == ["job", "watch"]:
+        print(f"sent {len(watch())} phone line(s)")
+        return 0
     if argv[:1] == ["schedule"]:
         entry = Path(__file__).resolve()
         from lantern_core.paths import data_dir
-        plans = [schedule.plan(job, hour, entry, data=data_dir()) for job, hour in (("curate", 3), ("doctor", 4))]
+        plans = [schedule.plan(job, hour, entry, data=data_dir()) for job, hour in (("curate", 3), ("doctor", 4), ("watch", None))]
         for p in plans:
             for path in p["files"]:
                 print(f"write {path}")
@@ -156,6 +171,8 @@ def main(argv: list[str]) -> int:
         return memory_cli(argv)
     if argv[:1] == ["approve"]:
         return approvals.cli(argv[1:])
+    if argv[:1] == ["alerts"]:
+        return alerts.cli(argv[1:])
     print(USAGE, file=sys.stderr)
     return 2
 

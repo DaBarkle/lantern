@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, survey, transcript
+from . import __version__, alerts, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -169,6 +169,7 @@ def session_start(payload: dict) -> dict | None:
         moved = ""
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
+            alerts.run(db, send=False)  # the user sees them here; the phone only hears what trips while they are away
             discovery.refresh_frontiers()  # and what is beyond reach closes by itself once its key or sign-in is there
             moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"}, db)
         profile = memory.profile(db, PROFILE_CHARS)
@@ -265,6 +266,8 @@ def session_start(payload: dict) -> dict | None:
         tail_block += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
                   f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}. Duties beyond these "
                   "watches are proposals until the user says yes; say which are active and which are only proposed."]
+        tail_block += [f"Phone alerts: {alerts.status()}. Change it with `alerts on|off` or `alerts kinds ...` after a structured "
+                       "question, never by editing a file."]
         pending = discovery.settings().get("pending") or []
         if discovery.settings().get("answered_at") and not pending:
             tail_block += ["The setup questions were answered (guardrails and profile above are in force)."]

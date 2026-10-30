@@ -14,16 +14,17 @@ def _launcher(entry: Path, job: str, data: Path | None = None) -> list[str]:
     return [uv, "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
 
 
-def plan(job: str, hour: int, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
+def plan(job: str, hour: int | None, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
          data: Path | None = None) -> dict:
-    """Daily job at `hour`:00 local time. Returns {"files": {path: text}, "commands": [[argv], ...]}."""
-    if not 0 <= hour <= 23:
+    """Daily job at `hour`:00 local time, or hourly when `hour` is None. Returns {"files": {path: text}, "commands": [[argv], ...]}."""
+    if hour is not None and not 0 <= hour <= 23:
         raise ValueError(f"hour must be 0-23, got {hour}")
     argv = _launcher(entry, job, data)
     name = f"lantern-{job}"
+    every = "hourly" if hour is None else "daily"
     if platform == "win32":
         return {"files": {}, "commands": [[
-            "schtasks", "/Create", "/F", "/SC", "DAILY", "/ST", f"{hour:02d}:00",
+            "schtasks", "/Create", "/F", "/SC", *(["HOURLY"] if hour is None else ["DAILY", "/ST", f"{hour:02d}:00"]),
             "/TN", name, "/TR", subprocess.list2cmdline(argv),
         ]]}
     if platform == "darwin":
@@ -34,14 +35,16 @@ def plan(job: str, hour: int, entry: Path, platform: str = sys.platform, home: P
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
             f'<plist version="1.0"><dict><key>Label</key><string>{label}</string>'
             f"<key>ProgramArguments</key><array>{args}</array>"
-            f"<key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer>"
-            "<key>Minute</key><integer>0</integer></dict></dict></plist>\n"
+            + ("<key>StartInterval</key><integer>3600</integer>" if hour is None else
+               f"<key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>0</integer></dict>")
+            + "</dict></plist>\n"
         )
         path = home / "Library" / "LaunchAgents" / f"{label}.plist"
         return {"files": {path: plist}, "commands": [["launchctl", "load", "-w", str(path)]]}
     unit_dir = home / ".config" / "systemd" / "user"
     service = f"[Unit]\nDescription=Lantern {job}\n\n[Service]\nType=oneshot\nExecStart={subprocess.list2cmdline(argv)}\n"
-    timer = f"[Unit]\nDescription=Lantern {job} daily\n\n[Timer]\nOnCalendar=*-*-* {hour:02d}:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
+    on = "hourly" if hour is None else f"*-*-* {hour:02d}:00:00"
+    timer = f"[Unit]\nDescription=Lantern {job} {every}\n\n[Timer]\nOnCalendar={on}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
     return {
         "files": {unit_dir / f"{name}.service": service, unit_dir / f"{name}.timer": timer},
         "commands": [["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", f"{name}.timer"]],
