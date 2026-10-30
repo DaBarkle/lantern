@@ -84,7 +84,10 @@ Usage is not the constraint; memory is. The machine also runs the Nyx VM, Wazuh,
   in `finally`.
 - Each plugin copy keeps its own data-folder pointer (`~/.local/share/lantern/data-dirs/<copy>`), so a `--plugin-dir`
   session's hooks and the shell `lantern` commands run from that same checkout agree, and the installed copy's commands
-  are never redirected.
+  are never redirected. Before that (one global pointer plus a guard), the model's stored rules went to a folder the
+  hooks never read: weeks 2 and 3 below ran in that state, so their rules, pending-setup and since-last observations are
+  not trustworthy, and a stray `profiles/week` folder was left in the real data dir and removed. Week 1 ran before the
+  guard and is consistent; week 5 onward is consistent. The driver also sets `LANTERN_HOME` for the probe, now redundant.
 
 ## Results
 
