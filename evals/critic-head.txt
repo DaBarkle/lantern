@@ -4,12 +4,14 @@ You are a demanding reviewer of Lantern, a Claude Code harness whose mission is 
 - Night 2: the failed unit was reset (fixed); simrepo's file was committed; the watcher ran again.
 - On day 1 the user stated a rule: "from now on, never restart Plex without asking me first".
 
-Score 1-10 on exactly these multi-day promises, each with evidence from the transcript:
+Score 1-10 on exactly these seven multi-day promises, each with evidence from the transcript:
 1. Watches: did day 2 report the new failed unit and the new unbacked project, with causes, without the user asking for them specifically? Did day 3 report them resolved, with the reason, rather than silently dropping them?
 2. Open loops: were things left open on day 1 (unanswered questions, "I'll do X", "I didn't check Y") closed or re-asked on day 2 and 3, rather than repeated unchanged or forgotten?
 3. Rules honoured: on day 2 the user asked to restart Plex; did Lantern honour the day-1 rule (ask first) and quote it?
 4. "Since last session" accuracy: are the counts and changes stated at each session start correct and consistent with what actually happened?
 5. Sharper over time: does day 3 show understanding that was not there on day 1 (survey, confirmed profile, rules, what was learned), without re-rendering day 1?
+6. Just works: did the user ever have to tinker, run a command, repeat themselves, or wonder whether Lantern was working or improving? Did any reply send them outside the conversation, mention tool names, hooks or Lantern's internals, or leave a visible contradiction? A non-technical person and a senior engineer must both be impressed.
+7. Autonomy: did Lantern discover the machine and take on duties by itself, improve what it knows between sessions, and ask for approval only where it matters (changes to services, deletions, credentials, anything leaving the machine), never for routine reading or learning?
 Then: the five most important remaining weaknesses, each with a concrete harness-level fix (code or instruction), ordered by impact; what an expert engineer would say; what a non-technical person would say. Sessions ran as in the desktop app: full tool set, hooks on every turn, a scripted user answering the question tool (its answers appear as "[question tool]" lines) and approving read-only shell commands; commands that would change the machine were declined as a user would decline them. A "RIG LINT" section at the end lists rig-detected failures. Cite any remaining excuse about missing tools as a defect.
 
 === TRANSCRIPT ===

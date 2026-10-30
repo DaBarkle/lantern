@@ -53,8 +53,8 @@ The transcript lands in `~/Documents/Week/week.txt`. Set `WEEK_RAW=<file>` to ke
 ## How critics score
 
 Three independent Opus 5.5 critics read the same transcript with the header in `evals/critic-head.txt`: the events as
-ground truth, the five multi-day promises (watches, open loops, rules honoured, since-last accuracy, sharper over
-time), then the five most important weaknesses with a harness-level fix each, and what an expert engineer and a
+ground truth, the seven multi-day promises (watches, open loops, rules honoured, since-last accuracy, sharper over
+time, just works, autonomy; the last two are the owner's standing goals), then the five most important weaknesses with a harness-level fix each, and what an expert engineer and a
 non-technical person would say. Medians are reported, not means; a single critic's outlier is noise.
 
 Critics run with `claude -p --setting-sources "" --strict-mcp-config --tools ""` so no plugin hook runs and nothing
