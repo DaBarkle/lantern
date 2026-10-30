@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 (2026-10-31)
+
+Measured against simulated weeks on a real machine; the first session is stronger and the sessions after it are honest.
+
+- First reply is text before any tool call; the wider look (containers, VMs, services, apps, SSH hosts, local servers) runs read-only in the first session without asking, and "look less" narrows it.
+- Nothing outside Claude: the user is never shown a command or syntax. A key or password is offered as a choice (paste it next, use the password manager, or not now); the value pasted on its own goes to the keychain before the model sees it. A Plex token the machine already holds is found in Plex's own settings file and stored, not asked for.
+- Plain words by default: the reader's register is learned from their own messages, their names for things are used, problems are named by their effect, and a carried guess stays a guess.
+- Hands-off replies are caught by shape and answered from Lantern's own snapshot; health questions re-run the cheap checks first; a read-only check that was only offered is run.
+- Since last session: computed in code with stable keys (new, changed, resolved with the reason, back again), including large new files; "what changed?" answers from that block; the first reply must name every item.
+- Rules: a restart or stop of anything a rule names asks first and quotes the rule; corrections supersede the fact they correct; curated rules come only from the user's own lines.
+- Open loops: offers and questions are carried as unfinished items and never re-asked verbatim; answers given through the question tool settle setup by themselves.
+- Phone alerts between sessions for newly tripped watches (failed or down services, disk, missed backups), deduplicated, through the approvals channel; the hourly check schedules itself once the phone can be reached (systemd user timer, launchd agent, Task Scheduler, or the user's crontab), and is built for the host when Lantern runs inside a container.
+- Status line set up by Lantern itself, keeping any status line the user had; where none renders, the same line shows under each reply. A plugin loaded from a folder never touches the user's settings.
+- Packs ship inside the core plugin and switch on by discovery, with their guards; the separate `lantern-tailscale` and `lantern-media-server` plugins are kept only as compatibility shims (uninstall them; nothing is lost).
+- Portability: hooks never block a prompt on an unfamiliar machine; nothing in the core assumes Fedora, systemd or a desktop keyring; discovery covers macOS and Windows.
+- Memory server exits after half an hour idle and comes back on demand; the data-folder pointer is per plugin copy, so a checkout under test never redirects the installed one.
+- Evals: replay on the user's own transcripts with a judge that says what was wrong; faithful simulated weeks driven like the desktop app, run in a bounded pool with a memory gate.
+
 ## Unreleased
 
 - A Plex token the machine already holds (Preferences.xml under Plex's config folder on Linux, macOS, Windows, or a Plex container's `/config` volume) is found and stored in the keychain as `PLEX_TOKEN` instead of being asked for; the session is told it was found, never the value.
