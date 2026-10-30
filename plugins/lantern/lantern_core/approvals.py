@@ -93,7 +93,11 @@ def cli(argv: list[str]) -> int:
         return 0
     if argv and not argv[0].startswith("-"):
         opts = dict(zip(argv[1::2], argv[2::2]))
-        code = ask(argv[0], float(opts.get("--timeout", 600)))
+        try:
+            code = ask(argv[0], float(opts.get("--timeout", 600)))
+        except OSError as e:
+            print(f"could not reach the ntfy server ({e}); the phone was not asked. Is this machine online?")
+            return TIMED_OUT
         print({APPROVED: "approved", DENIED: "denied", TIMED_OUT: "no answer"}[code])
         return code
     print(cli.__doc__)

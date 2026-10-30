@@ -43,9 +43,9 @@ def sync() -> list[str]:
     for name in active():
         src = ROOT / name / "SKILL.md"
         dst = _copy(name)
-        if src.exists() and (not dst.exists() or dst.read_text() != src.read_text()):
+        if src.exists() and (not dst.exists() or dst.read_bytes() != src.read_bytes()):
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(src.read_text())
+            dst.write_bytes(src.read_bytes())
             fixed.append(name)
     return fixed
 

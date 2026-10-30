@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from .paths import ensure_data_dir
+from .paths import ensure_data_dir, uv
 
 PATTERNS = [
     ("private key", re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")),
@@ -90,7 +90,7 @@ def _keyring():
 
 def _reexec_with_keyring(argv: list[str]) -> int:
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lantern.py")
-    return subprocess.call(["uv", "run", "--no-project", "--quiet", "--with", "keyring", script, *argv])
+    return subprocess.call([uv(), "run", "--no-project", "--quiet", "--with", "keyring", script, *argv])
 
 
 def _links_file():
@@ -161,6 +161,19 @@ def _ready(scheme: str, held: set[str]) -> tuple[bool, str, str]:
         "ask once for the database password (`lantern secret ask KEEPASSXC_PASSWORD` gives the sentence to show)"
 
 
+def keychain_missing() -> str | None:
+    """Why this machine has no keychain for secrets, or None when one should be there. Linux only needs a check: the
+    Secret Service lives on the user's session bus, which a headless server or an SSH login often has not got; macOS
+    and Windows always have theirs."""
+    if not sys.platform.startswith("linux"):
+        return None
+    bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or (Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "bus").exists()
+    if bus and any(shutil.which(d) for d in ("gnome-keyring-daemon", "kwalletd6", "kwalletd5", "keepassxc", "secret-tool")):
+        return None
+    return ("this machine has no desktop keyring (no Secret Service on a session bus), so secrets cannot be held here; "
+            "link a password manager CLI instead (pass, Bitwarden, 1Password or KeePassXC), or hand secrets over on a desktop session")
+
+
 def manager_status() -> dict:
     """What can hold secrets here: each installed password manager (ready or not, and why) and the OS keychain."""
     held = set(names())
@@ -172,8 +185,7 @@ def manager_status() -> dict:
         ok, why, ask = _ready(scheme, held)
         managers.append({"scheme": scheme, "tool": tool, "name": name, "path": where, "form": form, "ready": ok,
                          "why": "" if ok else why, "ask": "" if ok else ask})
-    return {"managers": managers, "keychain": _keyring() is not None or shutil.which("uv") is not None,
-            "stored": names(), "linked": links()}
+    return {"managers": managers, "keychain": keychain_missing() is None, "stored": names(), "linked": links()}
 
 
 PASTE = re.compile(r"^\s*secret\s+([A-Za-z][A-Za-z0-9_]{0,63})\s*[:=]\s*(\S{4,})\s*$")
@@ -210,7 +222,7 @@ def paste(prompt: str) -> tuple[str | None, bool]:
     (ensure_data_dir() / "secret-ask.json").unlink(missing_ok=True)
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lantern.py")
     try:
-        r = subprocess.run(["uv", "run", "--no-project", "--quiet", "--with", "keyring", script, "secret", "set", name],
+        r = subprocess.run([uv(), "run", "--no-project", "--quiet", "--with", "keyring", script, "secret", "set", name],
                            input=value, capture_output=True, text=True, timeout=60, env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())})
         return name, r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -251,7 +263,7 @@ def cli(argv: list[str]) -> int:
     if argv[:1] == ["delete"] and len(argv) == 2:
         try:
             kr.delete_password(SERVICE, argv[1])
-        except kr.errors.PasswordDeleteError:
+        except kr.errors.KeyringError:
             pass
         _names_file().write_text(json.dumps([n for n in names() if n != argv[1]]))
         return 0
@@ -259,7 +271,12 @@ def cli(argv: list[str]) -> int:
         split = argv.index("--")
         env = dict(os.environ)
         for name in ",".join(argv[1:split]).split(","):
-            value = kr.get_password(SERVICE, name)
+            try:
+                value = kr.get_password(SERVICE, name)
+            except kr.errors.KeyringError as e:
+                print(f"lantern: this session has no keychain to read {name} from ({e}); {keychain_missing() or 'try again on the desktop'}",
+                      file=sys.stderr)
+                return 1
             if value is None and name in links():
                 value = _read(links()[name], kr)
                 if value is None:

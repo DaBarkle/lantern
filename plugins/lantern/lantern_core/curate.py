@@ -5,6 +5,7 @@ from now on (a rule or preference the user stated, a fact about their setup or p
 or fact whose first line is its summary, so every later session loads it at start. One small call a day.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -107,9 +108,16 @@ def run(now: float | None = None, ask=_ask) -> int:
     return added
 
 
+# Where the installers put claude when a scheduler's or a GUI app's PATH does not say: the native installer (all OSes),
+# Homebrew on Apple silicon and Intel, npm's global folder on Linux/macOS and on Windows.
+CLAUDE_HOMES = [Path.home() / ".local" / "bin" / "claude", Path.home() / ".local" / "bin" / "claude.exe",
+                Path("/opt/homebrew/bin/claude"), Path("/usr/local/bin/claude"), Path.home() / ".npm-global" / "bin" / "claude"]
+if os.environ.get("APPDATA"):
+    CLAUDE_HOMES.append(Path(os.environ["APPDATA"]) / "npm" / "claude.cmd")
+
+
 def claude_bin() -> str:
-    # A scheduler's PATH often lacks the installer's folder, so look there too.
-    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+    return shutil.which("claude") or next((str(p) for p in CLAUDE_HOMES if p.exists()), str(CLAUDE_HOMES[0]))
 
 
 def available() -> bool:

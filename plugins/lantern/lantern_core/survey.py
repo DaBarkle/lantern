@@ -108,7 +108,7 @@ def run(data: Path | None = None) -> str:
     db = memory.connect()
     try:
         if text.strip():
-            (data / "survey.md").write_text(text)
+            (data / "survey.md").write_text(text, encoding="utf-8")
             memory.add_document(db, "doc", "survey", "Lantern's survey of this machine\n\n" + text)
             prof = text.split("# Profile", 1)[-1].strip() if "# Profile" in text else ""
             if prof:
@@ -149,6 +149,6 @@ def status(data: Path | None = None) -> str:
 def brief(data: Path | None = None, max_chars: int = 6000) -> str:
     data = data or ensure_data_dir()
     try:
-        return (data / "survey.md").read_text()[:max_chars]
+        return (data / "survey.md").read_text(encoding="utf-8")[:max_chars]
     except OSError:
         return ""

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Portability: a hook that crashes on an unfamiliar machine is logged and said once, never a blocked prompt; the memory server's stderr goes to `serve.log` and a server that did not come up is reported instead of restarted; free memory is read on macOS (`vm_stat`) and Windows too; uv and claude are found from `$UV` and the installers' folders when PATH is bare; tool output and free-text files are UTF-8 on every OS; the data folder is private (0700); a headless Linux box with no keyring gets a frontier pointing at the manager CLIs; offline approvals say so; guardrails and look-alikes no longer name Fedora unless the machine is one; project transcripts are found on Windows and under `CLAUDE_CONFIG_DIR`. See docs/platforms.md.
+
 ## 0.3.0 (2026-10-31)
 
 The first release that sets itself up, looks after itself, and knows your machine.

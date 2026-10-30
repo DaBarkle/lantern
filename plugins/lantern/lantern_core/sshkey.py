@@ -32,8 +32,11 @@ def grant(host: str, dry_run: bool = False, ask=approvals.ask) -> tuple[int, str
         return 0, "After one approval on the phone, Lantern would run:\n" + "\n".join("  " + shlex.join(c) for c in plan)
     if approvals.ready():
         return 2, f"not installed on {host}: {approvals.ready()}"
-    code = ask(f"Install Lantern's own SSH key on {host}? It lets Lantern check that host (read-only duties); "
-               "your own keys stay where they are.")
+    try:
+        code = ask(f"Install Lantern's own SSH key on {host}? It lets Lantern check that host (read-only duties); "
+                   "your own keys stay where they are.")
+    except OSError as e:
+        return approvals.TIMED_OUT, f"not installed on {host}: the phone could not be reached ({e}); is this machine online?"
     if code != approvals.APPROVED:
         return code, f"not installed on {host}: " + ("denied on the phone" if code == approvals.DENIED else "no answer")
     KEY.parent.mkdir(mode=0o700, exist_ok=True)

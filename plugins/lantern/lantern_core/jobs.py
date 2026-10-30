@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from . import curate, resources
-from .paths import ensure_data_dir
+from .paths import ensure_data_dir, uv
 
 DUE = {"curate": 20 * 3600, "doctor": 20 * 3600, "discover": 20 * 3600}  # a little under a day, so a daily session always triggers them
 LOCK_SECONDS = 2 * 3600
@@ -49,7 +49,7 @@ def start(jobs: list[str], entry: Path) -> list[str]:
         return started  # the machine is short of memory: today's jobs wait for a calmer session
     for job in jobs:
         mark(job, "started")
-        cmd = ["uv", "run", "--no-project", "--quiet", str(entry), "job", job, "--data", str(ensure_data_dir())]
+        cmd = [uv(), "run", "--no-project", "--quiet", str(entry), "job", job, "--data", str(ensure_data_dir())]
         kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if sys.platform == "win32":
             kw["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP

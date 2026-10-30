@@ -1,6 +1,7 @@
 """Claude Code hook entry points. Each reads the event JSON on stdin and may print a JSON reply."""
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -126,7 +127,7 @@ risk at most as one line. Data with zero copies outranks everything else. Never 
 If you cannot run something because this session has no shell, say what Lantern will do once it can, never a command
 for the user to run. Speak in one first-person voice ("I"); name Lantern only in a greeting, never as a
 second agent ("Lantern has saved" -> "I've saved"). Known
-benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
+benign look-alikes: a Plex claim token expires in minutes{lookalikes}. Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
 ask only before a write to the system. Something left unfinished in an earlier session is never re-offered in the same words: do
@@ -293,7 +294,8 @@ def session_start(payload: dict) -> dict | None:
         elif pending:
             tail_block += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
     lines += ["", f"Now: {time.strftime('%Y-%m-%d %H:%M %Z')}."]
-    lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS))]
+    lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS),
+                                                                lookalikes=lookalikes())]
     if tail_block and not first:
         stored = memory_rules_count
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
@@ -312,7 +314,9 @@ def capture_last_session(cwd: str, current: str) -> None:
     next session start in the same folder, the newest other transcript is read and stored if it was not already."""
     if not cwd:
         return
-    folder = Path.home() / ".claude" / "projects" / cwd.replace("/", "-")
+    # Claude Code names a project folder after its path with every non-alphanumeric character turned into "-" (so a
+    # Windows "C:\\Users\\x" and a Linux "/home/x" both work), under CLAUDE_CONFIG_DIR when that is set.
+    folder = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
     try:
         files = sorted(folder.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
     except OSError:
@@ -507,10 +511,16 @@ def user_prompt_submit(payload: dict) -> dict | None:
 
 GUARDRAILS = ["Never restart a service or container on this machine without asking first.",
               "Never push or copy folders that look personal (family, finance) off this machine.",
-              "Ask before changing the operating system (rpm-ostree, system config, system-wide services)."]
+              "Ask before changing the operating system (packages, system config, system-wide services)."]
 SEEDED = {  # rules the machine itself implies; stored at the first session so nobody has to say them
     "/run/ostree-booted": "This is an immutable OS (ostree): never layer packages or edit /usr; use Flatpak, Homebrew or containers.",
 }
+# Facts about this OS that stop the model misreading a finding; each only where its marker exists.
+LOOKALIKES = {"/run/ostree-booted": "/home is /var/home on Fedora Atomic (one volume)"}
+
+
+def lookalikes() -> str:
+    return "".join(f"; {t}" for m, t in LOOKALIKES.items() if Path(m).exists())
 YES = re.compile(r"^\s*(?:ok(?:ay)?|yes|yep|sure|all|all of them|both|go ahead|do it|fine|sounds good)\b[.!]?\s*$", re.I)
 
 
@@ -666,9 +676,32 @@ def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
     except json.JSONDecodeError:
         payload = {}
     t0 = time.monotonic()
-    reply = handler(payload)
+    try:
+        reply = handler(payload)
+    except Exception as e:  # a platform Lantern has not met must never block a prompt: log it, say so once, carry on
+        if name == "pre-tool-use":
+            raise  # the shield fails closed on its own terms; a crash there must stay visible
+        reply = _crashed(name, e)
     if name != "pre-tool-use":  # every prompt-path hook reports how long it took; the doctor watches the trend
         _log("hooks", {"hook": name, "ms": round((time.monotonic() - t0) * 1000)})
     if reply:
         stdout.write(json.dumps(reply))
     return 0
+
+
+ERROR_NOTE_EVERY = 3600
+
+
+def _crashed(name: str, e: Exception) -> dict | None:
+    import traceback
+    try:
+        _log("errors", {"hook": name, "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-2000:]})
+        marker = ensure_data_dir() / "errors.noted"
+        fresh = time.time() - marker.stat().st_mtime < ERROR_NOTE_EVERY if marker.exists() else False
+        marker.touch()
+    except OSError:
+        return None
+    if fresh:
+        return None
+    return {"systemMessage": f"Lantern's {name} step hit a problem on this machine ({type(e).__name__}: {str(e)[:120]}). "
+                             f"The session carries on without it; the doctor has the details."}

@@ -13,7 +13,7 @@ claude plugin marketplace add github.com/DaBarkle/lantern
 claude plugin install lantern@lantern
 ```
 
-Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Say hello: the first reply already knows the machine, tells you what you may not know, and asks two questions. That is all. See [docs/first-hour.md](docs/first-hour.md).
+Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Say hello: the first reply already knows the machine, tells you what you may not know, and asks two questions. That is all. See [docs/first-hour.md](docs/first-hour.md); what works on which OS is in [docs/platforms.md](docs/platforms.md).
 
 ## What you get
 
