@@ -26,13 +26,19 @@ LANTERN = Path(__file__).resolve().parents[1] / "plugins" / "lantern" / "lantern
 
 def session(cwd: Path, prompt: str, sid: str | None = None, resume: str | None = None) -> str:
     cmd = ["claude", "-p", "--model", MODEL, "--setting-sources", "user", "--strict-mcp-config", "--tools", "Read,Glob,Grep",
-           "--max-turns", "8", "--output-format", "json"]
+           "--max-turns", "16", "--output-format", "json"]
     cmd += ["--session-id", sid] if sid else ["--resume", resume] if resume else ["--no-session-persistence"]
-    r = subprocess.run(cmd + [prompt], capture_output=True, text=True, cwd=cwd, timeout=600)
-    try:
-        return json.loads(r.stdout).get("result", "")
-    except ValueError:
-        return r.stdout[-500:]
+    for attempt in range(2):  # an empty reply (turn budget spent on reading) is retried once; a silent turn is a bug
+        r = subprocess.run(cmd + [prompt], capture_output=True, text=True, cwd=cwd, timeout=900)
+        try:
+            text = json.loads(r.stdout).get("result", "") or ""
+        except ValueError:
+            text = r.stdout[-500:]
+        if text.strip():
+            return text
+        if sid and attempt == 0:
+            cmd = [c for c in cmd if c not in ("--session-id", sid)] + ["--resume", sid]
+    return "(no reply: the session produced no final message twice)"
 
 
 def lantern(data: Path, *args: str) -> str:

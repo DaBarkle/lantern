@@ -423,11 +423,11 @@ class SetupAnswerTest(unittest.TestCase):
                 r = hooks.user_prompt_submit({"prompt": "ok", "session_id": "s1"})
             self.assertIn("accepted the setup", r["hookSpecificOutput"]["additionalContext"])
             self.assertIn(hooks.GUARDRAILS[0], r["hookSpecificOutput"]["additionalContext"])  # the model is told exactly what was stored
-            self.assertEqual(discovery.settings()["pending"], [])
+            self.assertEqual(discovery.settings()["pending"], ["purpose"])  # a bare yes never answers who the user is
             self.assertEqual(discovery.settings()["depth"], 3)
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("Never restart a service or container", ctx)
-            self.assertIn("setup questions were answered", ctx)
+            self.assertIn("never confirmed", ctx)
             self.assertIn("Lantern's watches", ctx)
             self.assertIn("Now: 20", ctx)
             db = memory.connect()

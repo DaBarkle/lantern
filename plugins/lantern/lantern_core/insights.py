@@ -180,8 +180,13 @@ def discovered_since_last(db) -> str:
     return ""
 
 
-def diff_since_last(found_keys: set[str]) -> str:
+_db_for_diff = None
+
+
+def diff_since_last(found_keys: set[str], db=None) -> str:
     """How the findings moved since the last session, with what each resolved one looks like now; remembers them."""
+    global _db_for_diff
+    _db_for_diff = db
     s = discovery.settings()
     before = set(s.get("insights", []))
     s["insights"] = sorted(found_keys)
@@ -193,6 +198,9 @@ def diff_since_last(found_keys: set[str]) -> str:
             f"{len(found_keys & before)} unchanged (all checked just now).")
     if new:
         line += " New: " + "; ".join(k.removeprefix("insight/").replace("/", " ", 1).replace(str(Path.home()), "~") for k in sorted(new)[:6]) + "."
+    found = discovered_since_last(_db_for_diff) if _db_for_diff else ""
+    if found:
+        line += " " + found.rstrip(".") + " (newly discovered on this machine, say so)."
     if resolved:
         line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
     return line

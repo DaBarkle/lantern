@@ -118,7 +118,10 @@ second agent ("Lantern has saved" -> "I've saved"). Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 If the next useful step is read-only or produces a draft (a diff, a list, a check), do it in this reply and show it;
-ask only before a write to the system. Read-only watching is on by default: announce it, offer "say stop watching X",
+ask only before a write to the system. An open loop from an earlier session is never re-offered in the same words: do
+its read-only or text part now (draft the diff, read the file, state the cause), re-ask it once, or retire it with a
+reason. When a standing rule touches the request, begin with `Your rule: "<exact text>"` and apply it, including the
+reason it was given (check what the reason protects before acting). Read-only watching is on by default: announce it, offer "say stop watching X",
 never ask permission for it. Never mention tool names, hooks, "no shell", "the question tool" or Lantern's commands to
 the user; at most one plain line about what you could not reach. Absolute words ("only", "never", "all") are allowed
 only on claims tagged verified. Before saying A must come before B, name the concrete mechanism by which B fails
@@ -153,7 +156,7 @@ def session_start(payload: dict) -> dict | None:
         moved = ""
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
-            moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"})
+            moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"}, db)
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact", dated=True)
@@ -243,9 +246,13 @@ def session_start(payload: dict) -> dict | None:
         lines += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
                   f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}. Duties beyond these "
                   "watches are proposals until the user says yes; say which are active and which are only proposed."]
-        if discovery.settings().get("answered_at"):
+        pending = discovery.settings().get("pending") or []
+        if discovery.settings().get("answered_at") and not pending:
             lines += ["The setup questions were answered (guardrails and profile above are in force)."]
-        elif discovery.settings().get("pending"):
+        elif discovery.settings().get("answered_at"):
+            lines += ["The guardrails were accepted; what this machine is for was never confirmed: state your reading of it in one "
+                      "line and ask once whether it is right (then store it with `remember --profile`)."]
+        elif pending:
             lines += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
     lines += ["", f"Now: {time.strftime('%Y-%m-%d %H:%M %Z')}."]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry, guardrails=" | ".join(f'"{g}"' for g in GUARDRAILS))]
@@ -424,10 +431,9 @@ def setup_answer(prompt: str) -> str | None:
     try:
         for rule in GUARDRAILS:
             memory.add(db, "rule", "setup", rule)
-        memory.add(db, "profile", "setup", "Confirmed Lantern's reading of this machine: " + (discovery.summary() or "a personal machine") + ".")
     finally:
         db.close()
-    s["pending"] = []
+    s["pending"] = ["purpose"]  # a bare yes covers the guardrails and the wider look, not who the user is
     s["depth"] = max(3, s.get("depth", 2))
     s["answered_at"] = time.time()
     discovery.save_settings(s)
