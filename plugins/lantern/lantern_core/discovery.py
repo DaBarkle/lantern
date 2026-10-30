@@ -489,6 +489,64 @@ API_SECRETS = {"Plex": "PLEX_TOKEN", "Home Assistant": "HASS_TOKEN", "UniFi Netw
                "Overseerr/Jellyseerr": "OVERSEERR_API_KEY", "Tautulli": "TAUTULLI_API_KEY", "Portainer": "PORTAINER_API_KEY"}
 
 
+# Plex writes its own token into Preferences.xml; where that file lives on each OS, and inside a container's config volume.
+PLEX_PREFS = "Library/Application Support/Plex Media Server/Preferences.xml"
+PLEX_FILES = {"linux": [f"/var/lib/plexmediaserver/{PLEX_PREFS}", f"~/snap/plexmediaserver/common/{PLEX_PREFS}"],
+              "mac": ["~/Library/Application Support/Plex Media Server/Preferences.xml"],
+              "windows": [os.environ.get("LOCALAPPDATA", "") + "/Plex Media Server/Preferences.xml"]}
+
+
+def _on_host(path: str) -> Path:
+    """An absolute path as seen from this session: through /run/host when it runs in a container."""
+    p = Path(path).expanduser()
+    return HOST_ROOT / p.relative_to("/") if p.is_absolute() and HOST_ROOT != Path("/") and PLATFORM == "linux" else p
+
+
+def plex_prefs_paths() -> list[Path]:
+    paths = [_on_host(f) for f in PLEX_FILES[PLATFORM] if f.strip("/ ")]
+    for engine in ("docker", "podman"):  # a Plex container: its /config volume holds the same file
+        for line in _run([engine, "ps", "--format", "{{.Names}}\t{{.Image}}"]).splitlines():
+            if "plex" in line.lower() and "\t" in line:
+                mounts = _run([engine, "inspect", line.split("\t")[0], "--format", "{{range .Mounts}}{{.Destination}}={{.Source}}\n{{end}}"])
+                for m in mounts.splitlines():
+                    dst, _, src = m.partition("=")
+                    if dst == "/config" and src:
+                        paths.append(_on_host(src) / PLEX_PREFS)
+    return paths
+
+
+def plex_token() -> str | None:
+    """The token from the first Preferences.xml that has one; read into a local only and handed straight to the keychain."""
+    import xml.etree.ElementTree as ET
+    for path in plex_prefs_paths():
+        try:
+            token = ET.parse(path).getroot().attrib.get("PlexOnlineToken")
+        except (OSError, ET.ParseError):
+            continue
+        if token:
+            return token
+    return None
+
+
+LOCAL_SOURCES = {"PLEX_TOKEN": plex_token}  # a key the machine already holds is found, not asked for
+
+
+def harvest(name: str, service: str) -> bool:
+    """Find a needed key on this machine and store it in the keychain; say so on Stage (the value is never shown)."""
+    from . import shield, stage
+    finder = LOCAL_SOURCES.get(name)
+    value = finder() if finder else None
+    if not value or not shield.store(name, value):
+        return False
+    db = memory.connect()
+    try:
+        stage.publish(db, f"secret/{name}", "shield", f"Lantern found the {service} token in {service}'s own settings file and stored it "
+                      f"in the keychain as {name}; nothing to paste. Commands use it as `lantern secret run {name} -- <command>`.", score=4, days=2)
+    finally:
+        db.close()
+    return True
+
+
 def frontiers() -> list[dict]:
     """Where discovery stopped: each wall as a finding (what, why Lantern cannot pass it, what passing it would unlock,
     the one-line ask). A frontier closes by itself once what it needs is there (a key stored, a manager signed in, a
@@ -515,6 +573,8 @@ def frontiers() -> list[dict]:
             out.append(frontier(cid, c["name"], "Lantern has no key of its own on this host", "checking its services, disks and backups over SSH",
                                 f"one tap on your phone and Lantern installs its own key on {c['name']} (nothing typed)"))
         need = API_SECRETS.get(c["name"]) if cid.startswith("port:") else None
+        if need and need not in held and harvest(need, c["name"]):
+            held.add(need)
         if need and need not in held:
             out.append(frontier(cid, c["name"], "it answers locally but Lantern has no API key for it", "watching its health, queue and errors",
                                 f"ask with the question tool how they want to give its API key (paste next, password manager, not now), "

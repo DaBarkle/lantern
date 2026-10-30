@@ -179,3 +179,61 @@ class SshKeyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlexTokenTest(unittest.TestCase):
+    """A key the machine already holds is found and stored, never asked for."""
+
+    def test_token_is_read_from_preferences_and_stored(self):
+        import tempfile
+        from lantern_core import discovery, memory, shield, stage
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{tmp}/d"}):
+            prefs = Path(tmp, "Preferences.xml")
+            prefs.write_text('<?xml version="1.0" encoding="utf-8"?>\n<Preferences MachineIdentifier="m" PlexOnlineToken="tok123XYZ" FriendlyName="x"/>\n')
+            discovery.save_settings({"depth": 3, "capabilities": {"port:32400": {"name": "Plex", "check": {"type": "port", "port": 32400}}}})
+            stored = []
+            with mock.patch.object(discovery, "plex_prefs_paths", return_value=[Path(tmp, "missing.xml"), prefs]), \
+                    mock.patch.object(shield, "store", side_effect=lambda n, v: stored.append((n, v)) or True), \
+                    mock.patch.object(shield, "manager_status", return_value={"managers": []}), mock.patch.object(shield, "keychain_missing", return_value=None), \
+                    mock.patch.object(shield, "names", return_value=[]), mock.patch.object(shield, "links", return_value={}):
+                fs = discovery.real_frontiers()
+            self.assertEqual(stored, [("PLEX_TOKEN", "tok123XYZ")])
+            self.assertFalse([f for f in fs if f["id"] == "frontier:port:32400"])  # found, so nothing to ask
+            db = memory.connect()
+            msg = next(e["message"] for e in stage.top(db) if e["key"] == "secret/PLEX_TOKEN")
+            db.close()
+            self.assertIn("found the Plex token", msg)
+            self.assertNotIn("tok123XYZ", msg)
+
+    def test_no_keychain_keeps_the_ask(self):
+        import tempfile
+        from lantern_core import discovery, shield
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{tmp}/d"}):
+            discovery.save_settings({"depth": 3, "capabilities": {"port:32400": {"name": "Plex", "check": None}}})
+            with mock.patch.object(discovery, "plex_token", return_value="tok"), mock.patch.object(shield, "store", return_value=False), \
+                    mock.patch.object(shield, "manager_status", return_value={"managers": []}), mock.patch.object(shield, "keychain_missing", return_value=None), \
+                    mock.patch.object(shield, "names", return_value=[]), mock.patch.object(shield, "links", return_value={}):
+                fs = discovery.real_frontiers()
+            self.assertTrue([f for f in fs if f["id"] == "frontier:port:32400"])
+
+    def test_paths_per_platform_and_container_volume(self):
+        from lantern_core import discovery
+
+        def run(cmd):
+            if cmd[1] == "ps":
+                return "plex\tlscr.io/linuxserver/plex\nweb\tnginx\n" if cmd[0] == "podman" else ""
+            if cmd[1] == "inspect":
+                return "/config=/home/u/plex/config\n/data=/srv/media\n"
+            return ""
+        with mock.patch.object(discovery, "_run", run), mock.patch.object(discovery, "HOST_ROOT", Path("/")):
+            with mock.patch.object(discovery, "PLATFORM", "linux"):
+                paths = [str(p) for p in discovery.plex_prefs_paths()]
+                self.assertIn("/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml", paths)
+                self.assertIn("/home/u/plex/config/Library/Application Support/Plex Media Server/Preferences.xml", paths)
+            with mock.patch.object(discovery, "PLATFORM", "mac"):
+                self.assertTrue(str(discovery.plex_prefs_paths()[0]).endswith("Library/Application Support/Plex Media Server/Preferences.xml"))
+            with mock.patch.object(discovery, "PLATFORM", "windows"), mock.patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/u/AppData/Local"}):
+                self.assertIn("Plex Media Server", str(discovery.plex_prefs_paths()[0]))
+        with mock.patch.object(discovery, "_run", lambda cmd: ""), mock.patch.object(discovery, "HOST_ROOT", Path("/run/host")), \
+                mock.patch.object(discovery, "PLATFORM", "linux"):
+            self.assertTrue(str(discovery.plex_prefs_paths()[0]).startswith("/run/host/var/lib/plexmediaserver/"))  # from inside a container
