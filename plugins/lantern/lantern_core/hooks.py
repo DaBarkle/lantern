@@ -242,10 +242,43 @@ def session_start(payload: dict) -> dict | None:
     return _context("SessionStart", "\n".join(lines))
 
 
+def capture_previous(payload: dict) -> None:
+    """The Stop hook captures each exchange; where it does not run (print mode, some clients) the next prompt captures the
+    previous exchange from the transcript instead, so memory, the ledger and open loops never depend on it."""
+    path = payload.get("transcript_path") or ""
+    if not path:
+        return
+    turn = transcript.last_turn(path)
+    if not turn["user"] or _is_system(turn["user"]):
+        return
+    session = payload.get("session_id", "?")
+    head = f"User: {turn['user'][:CAPTURE_CHARS]}"
+    db = memory.connect()
+    try:
+        last = db.execute("SELECT text FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (session,)).fetchone()
+        if last and last[0].startswith(head[:200]):
+            return  # the Stop hook already captured it
+        _store_turn(db, session, payload.get("cwd") or "", turn)
+    finally:
+        db.close()
+
+
+def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
+    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {turn['reply'][:CAPTURE_CHARS]}"
+    acts = [f"edited {', '.join(turn['files'][-6:])}" if turn["files"] else "",
+            f"ran {'; '.join(turn['commands'][-4:])}" if turn["commands"] else "",
+            f"{turn['failed']} tool call(s) failed" if turn["failed"] else ""]
+    if any(acts):
+        text += "\nActions: " + "; ".join(a for a in acts if a)
+    memory.add(db, "turn", session, shield.redact(text))
+    memory.ledger_update(db, session, cwd, turn)
+
+
 def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
+    capture_previous(payload)
     answered = setup_answer(prompt)
     name = shield.paste(prompt)
     if name:  # a secret handed over in chat: it is now in the keychain and this message never reaches the model
@@ -272,6 +305,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
             query += "\n" + " ".join(memory.identifiers(memory.session_turns(db, session), limit=10))
             want = set(memory.terms(query))
         noted = note_correction(db, session, prompt)
+        touching = memory.rules_touching(db, prompt)
         kw_hits = [h for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
         keyword = [h["id"] for h in kw_hits]
@@ -332,6 +366,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines.append("Also possibly relevant:")
             lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
                       for h in titles]
+    if touching:
+        lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
         if "finished its survey" in attention:  # deliver the brief now, not at the next session start
@@ -403,16 +439,9 @@ def stop(payload: dict) -> dict | None:
     turn = transcript.last_turn(payload.get("transcript_path", ""))
     if not turn["user"] or _is_system(turn["user"]):
         return None
-    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {turn['reply'][:CAPTURE_CHARS]}"
-    acts = [f"edited {', '.join(turn['files'][-6:])}" if turn["files"] else "",
-            f"ran {'; '.join(turn['commands'][-4:])}" if turn["commands"] else "",
-            f"{turn['failed']} tool call(s) failed" if turn["failed"] else ""]
-    if any(acts):
-        text += "\nActions: " + "; ".join(a for a in acts if a)
     db = memory.connect()
     try:
-        memory.add(db, "turn", payload.get("session_id", "?"), shield.redact(text))
-        memory.ledger_update(db, payload.get("session_id", "?"), payload.get("cwd") or "", turn)
+        _store_turn(db, payload.get("session_id", "?"), payload.get("cwd") or "", turn)
     finally:
         db.close()
     return None

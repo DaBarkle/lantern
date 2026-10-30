@@ -110,7 +110,9 @@ class LedgerTest(unittest.TestCase):
     def test_correction_becomes_a_rule_at_once(self):
         r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "don't restart plex without asking me first"})
         self.assertIn("standing rule", r["systemMessage"])
-        self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "can you restart plex?"}))  # a question is not a rule
+        q = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "can you restart plex?"})  # a question is not a rule
+        self.assertNotIn("systemMessage", q)
+        self.assertIn("Standing rules that touch this request", q["hookSpecificOutput"]["additionalContext"])  # but the rule is quoted
         for task in ("stop the plex container and check the logs", "make sure you restart wireplumber after", "remember to push the branch"):
             r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": task})
             self.assertTrue(r is None or "systemMessage" not in r, task)  # a task for now is not a standing rule
@@ -440,3 +442,32 @@ class MissedRunTest(unittest.TestCase):
         self.assertTrue(insights._missed("Fri 2026-10-30 03:30:00 AEDT", now=time.mktime(time.strptime("2026-10-30 05:00:00", "%Y-%m-%d %H:%M:%S"))))
         self.assertFalse(insights._missed("Fri 2026-10-30 03:30:00 AEDT", now=time.mktime(time.strptime("2026-10-30 03:35:00", "%Y-%m-%d %H:%M:%S"))))
         self.assertFalse(insights._missed(""))
+
+
+class HeadlessCaptureTest(unittest.TestCase):
+    def test_previous_exchange_is_captured_at_the_next_prompt_when_stop_did_not_run(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            p = Path(d) / "t.jsonl"
+            write(p, [user("check the plex unit"), assistant("Done. I didn't check the journal yet.")])
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                hooks.user_prompt_submit({"prompt": "and now?", "session_id": "s1", "transcript_path": str(p), "cwd": d})
+                hooks.user_prompt_submit({"prompt": "and now again?", "session_id": "s1", "transcript_path": str(p), "cwd": d})
+            db = memory.connect()
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn'").fetchone()[0], 1)  # once, not twice
+            self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet"])
+            db.close()
+
+
+class RuleTouchingTest(unittest.TestCase):
+    def test_a_matching_rule_is_quoted_at_prompt_time(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "rule", "said:s0", "from now on never restart Plex without asking me first")
+            memory.add(db, "rule", "said:s0", "keep replies short")
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                r = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s1"})
+            ctx = r["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Standing rules that touch this request", ctx)
+            self.assertIn("never restart Plex", ctx)
+            self.assertNotIn("keep replies short", ctx)

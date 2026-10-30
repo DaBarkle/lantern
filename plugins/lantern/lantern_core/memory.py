@@ -152,6 +152,17 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: boo
     return out
 
 
+def rules_touching(db: sqlite3.Connection, prompt: str, limit: int = 2) -> list[str]:
+    """Standing rules that share a distinctive word with the request ("restart", "plex"), so they are applied, not just loaded."""
+    words = [w for w in terms(prompt) if len(w) >= 4]
+    if not words:
+        return []
+    match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+    rows = db.execute("SELECT items.text FROM items_fts JOIN items ON items.id = items_fts.rowid WHERE items_fts MATCH ? "
+                      "AND items.kind='rule' AND items.status='active' ORDER BY bm25(items_fts) LIMIT ?", (match, limit)).fetchall()
+    return [t.strip().splitlines()[0][:300] for (t,) in rows]
+
+
 def learned_since(db: sqlite3.Connection, since: float, limit: int = 6) -> list[str]:
     """Rules, facts, patterns and profile lines curated or stated since a time, newest first (not discovery cards)."""
     rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile') AND status='active' "
@@ -186,7 +197,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     return d
 
 
-_LOOP = re.compile(r"(?m)^\s*(?:[-*\d.]+\s*)?((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
+_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
                    r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{10,220})")
 
 
