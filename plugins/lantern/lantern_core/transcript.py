@@ -16,7 +16,7 @@ def _text(content) -> str:
     return ""
 
 
-def _entries(path: str | Path) -> list[dict]:
+def _entries(path: str | Path, sidechain: bool = False) -> list[dict]:
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
@@ -34,15 +34,15 @@ def _entries(path: str | Path) -> list[dict]:
             e = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if e.get("type") in ("user", "assistant") and not e.get("isSidechain"):
-            out.append(e)
+        if e.get("type") in ("user", "assistant") and (sidechain or not e.get("isSidechain")):
+            out.append(e)  # an agent's own transcript is all sidechain: read it when asked to
     return out
 
 
-def messages(path: str | Path) -> list[tuple[str, str]]:
+def messages(path: str | Path, sidechain: bool = False) -> list[tuple[str, str]]:
     """[(role, text)] in order, skipping tool results and empty entries. Missing file -> []."""
     out = []
-    for e in _entries(path):
+    for e in _entries(path, sidechain):
         text = _text(e.get("message", {}).get("content")).strip()
         if text and not (e["type"] == "user" and text.startswith(HOOK_FEEDBACK)):
             out.append((e["type"], text))

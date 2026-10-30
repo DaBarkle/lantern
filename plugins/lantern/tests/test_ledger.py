@@ -315,6 +315,16 @@ class LedgerTest(unittest.TestCase):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # both named across the turn: no third pass
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))
 
+    def test_an_agents_result_is_kept_even_though_its_transcript_is_sidechain(self):
+        p = Path(self.tmp.name) / "agent.jsonl"
+        lines = [{"type": "user", "isSidechain": True, "message": {"role": "user", "content": "check backup coverage"}},
+                 {"type": "assistant", "isSidechain": True, "message": {"role": "assistant", "content": [{"type": "text", "text": "None of the four folders is covered by hermes-backup."}]}}]
+        p.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        self.call("subagent-stop", {"session_id": "s1", "agent_transcript_path": str(p)})
+        db = memory.connect()
+        self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn' AND text LIKE 'Agent result:%'").fetchone()[0], 1)
+        db.close()
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
