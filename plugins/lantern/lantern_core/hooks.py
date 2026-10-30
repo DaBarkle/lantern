@@ -111,7 +111,9 @@ to run, never suggest packs, never suggest a new session. After any task, end by
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
 `uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, ssh grant HOST, pack on NAME, doctor, status),
 always in exactly that shape, one per Bash call, never in a variable, never chained with && or ;. Ask
-choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid).
+choices with the AskUserQuestion tool, never as prose alternatives at the end of a reply ("A, or say B"), so a "yes"
+is never ambiguous; after a declined check, say what is known without it and move on, never "allow it next time".
+Explain with tables, short lists and indented text trees (never mermaid).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
 Findings on the Stage were checked within the last hour; when you recommend an order of fixes, rank verified data
@@ -665,6 +667,11 @@ _DELEGATES = re.compile(r"\brun [^.\n]{0,80}\byourself\b|\bso you can (?:approve
 _NO_STATE = re.compile(r"\bI (?:don't|do not) know (?:the state|whether|if|how)\b|\bI (?:\w+ )?(?:couldn't|could not|can't|cannot|wasn't able to|"
                        r"was unable to) (?:check|run|see|tell|verify|confirm)\b|\b(?:was|were|got) (?:blocked|declined|denied)\b", re.I)
 _CMD_LINE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+`[^`]{2,}`", re.M)
+# A closing choice typed as prose ("Tell me which account, or say 'copy it locally'", "Which would you like?") makes the
+# user's next "yes" ambiguous; a choice is asked with the question tool. Only the last paragraph counts.
+_PROSE_CHOICE = re.compile(r"(?:\bor\b[^.?\n]{3,120}\?\s*$)|(?:\b(?:which|either)\b[^.?\n]{3,120}\?\s*$)|(?:,\s*or\s+(?:say|tell me)\b[^.\n]{3,120}\.\s*$)", re.I)
+# After a declined check the user is never asked to allow it next time; what is known without it is stated instead.
+_ALLOW_NEXT = re.compile(r"\b(?:allow|approve)\b[^.\n]{0,40}\b(?:next time|when it comes up|the next time|if it comes up)\b|\bsince you declined\b[^.\n]{0,60}\b(?:I (?:won't|will not)|I'm not going to)\b", re.I)
 _OFFERED_READ = re.compile(r"\b(?:Should I|Shall I|Want me to|Do you want me to|Say the word and I'll) (?:run|check|read|look|inspect|verify|scan|list|pull)\b"
                            r"(?![^?\n]*\b(?:restart|stop|kill|delete|remove|prune|push|install|change|edit|write|enable|disable)\b)[^?\n]{0,140}\?", re.I)
 _JARGON = re.compile(r"`[^`\n]*(?:\s-{1,2}[A-Za-z]|\s/[a-z]\b|\$\w)[^`\n]*`|\bcode=exited\b|\bstatus=\d+/|\b\w+\[\d+\]: |\bexit (?:code|status) \d+\b")
@@ -730,6 +737,14 @@ def stop_nudge(payload: dict) -> dict | None:
         return {"decision": "block", "reason": "This reader asked for plain words, and the reply carries jargon: \"" + jargon.group(0).strip()[:80] + "\". "
                 "Add two or three plain sentences saying what that means for them and what happens next, with no commands, flags, "
                 "exit codes or raw log lines; an exact detail may stay as one short line at the very end, marked 'details'."}
+    last = turn["reply"].rstrip().rsplit("\n\n", 1)[-1]
+    if "[question tool]" not in last and (choice := _PROSE_CHOICE.search(last)):
+        return {"decision": "block", "reason": "Your reply ends with a choice written as prose: \"" + choice.group(0).strip()[:120] + "\". "
+                "A choice is asked with the AskUserQuestion tool, with each option as a label, so the user's next \"yes\" is never ambiguous. "
+                "Ask it that way now, or close with one plain offer."}
+    if (allow := _ALLOW_NEXT.search(turn["reply"])):
+        return {"decision": "block", "reason": "Your reply says \"" + allow.group(0).strip() + "\". A declined check is never put back on the user: "
+                "say what is known without it and carry on. Rewrite that sentence."}
     offered = _OFFERED_READ.search(turn["reply"])
     if offered:
         return {"decision": "block", "reason": "Your reply offers a read-only check instead of doing it: \"" + offered.group(0).strip() + "\". "

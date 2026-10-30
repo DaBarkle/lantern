@@ -219,6 +219,20 @@ class LedgerTest(unittest.TestCase):
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a change is asked about, rightly
 
+    def test_a_closing_choice_in_prose_and_allow_next_time_are_sent_back(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("hello"), assistant("Your project exists only here.\n\nTell me which GitHub account to use, or say \"copy it locally\" and I'll copy it. Which would you like?")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertIn("choice written as prose", out["reason"])
+        write(p, [user("hello"), assistant("I could not see which account this machine is signed in to; that check was declined. Allow it the next time it comes up. Meanwhile the project stays local.")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertIn("never put back on the user", out["reason"])
+        write(p, [user("hello"), assistant("Your project exists only here. The disk is fine and nothing has failed.\n\nNext I can put the project online; say so when you want that.")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={}):
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # one plain offer is fine
+
     def test_jargon_is_sent_back_for_a_plain_reader(self):
         p = Path(self.tmp.name) / "t.jsonl"
         write(p, [user("is my computer ok?"), assistant("Kase failed: `systemctl --user reset-failed app-io.github.dabarkle.Kase@autostart.service` clears it (status=137/n/a).")])
