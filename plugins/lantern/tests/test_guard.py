@@ -85,7 +85,8 @@ class ShieldTest(unittest.TestCase):
 class DoctorTest(unittest.TestCase):
     def test_findings_follow_checks(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
-            with mock.patch.object(doctor.semantic, "search", return_value=None):
+            with mock.patch.object(doctor.semantic, "search", return_value=None), \
+                    mock.patch("subprocess.Popen", side_effect=OSError("no uv")):
                 results = dict((n, s) for n, s, _ in doctor.run_all())
             self.assertEqual(results["semantic"], doctor.WARN)
             self.assertEqual(results["shield"], doctor.OK)
