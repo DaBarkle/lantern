@@ -92,7 +92,8 @@ def lint(log: list[str]) -> str:
     days = [s for s in log if s.startswith("=== DAY")]
     seen, repeats, headless = {}, [], []
     for i, section in enumerate(days):
-        headless += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HEADLESS.finditer(section)]
+        said = "\n".join(l for l in section.splitlines() if not l.startswith("[question tool]"))  # the rig's own lines
+        headless += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HEADLESS.finditer(said)]
         for offer in OFFER.findall(section):
             if offer in seen and seen[offer] != i:
                 repeats.append(f"{section.splitlines()[0]} repeats an offer from {days[seen[offer]].splitlines()[0]}: {offer}")
