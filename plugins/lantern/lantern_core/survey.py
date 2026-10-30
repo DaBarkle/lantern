@@ -15,7 +15,9 @@ MODEL = "sonnet"
 MAX_TURNS = 40
 TIMEOUT = 900
 PROMPT = """You are surveying a machine for Lantern, a harness that will remember this for every later session. You can only
-read files (Read, Glob, Grep); never run commands or change anything. Skip anything that looks like a secret or a key.
+read files (Read, Glob, Grep); never run commands or change anything. Never open ~/.claude, ~/.ssh (except the host
+names in config), browser profiles, mail, or anything named credentials, token, key or password; skip anything that
+looks like a secret and never quote one.
 
 What discovery already found:
 {inventory}
