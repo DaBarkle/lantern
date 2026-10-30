@@ -9,7 +9,7 @@ export const meta = {
   ],
 }
 const { transcript, head, plugin, rig } = args
-const SCORES = { type: 'object', properties: { watches: { type: 'number' }, open_loops: { type: 'number' }, rules: { type: 'number' }, since_last: { type: 'number' }, sharper: { type: 'number' } }, required: ['watches', 'open_loops', 'rules', 'since_last', 'sharper'] }
+const SCORES = { type: 'object', properties: { watches: { type: 'number' }, open_loops: { type: 'number' }, rules: { type: 'number' }, since_last: { type: 'number' }, sharper: { type: 'number' }, just_works: { type: 'number' }, autonomy: { type: 'number' } }, required: ['watches', 'open_loops', 'rules', 'since_last', 'sharper', 'just_works', 'autonomy'] }
 const WEAK = { type: 'object', properties: { title: { type: 'string' }, evidence: { type: 'string', description: 'verbatim quote(s) from the transcript' }, fix: { type: 'string', description: 'concrete harness-level fix (code or instruction)' }, impact: { type: 'number', description: '1-10' } }, required: ['title', 'evidence', 'fix', 'impact'] }
 const CRITIC = { type: 'object', properties: { scores: SCORES, weaknesses: { type: 'array', items: WEAK }, engineer: { type: 'string' }, non_technical: { type: 'string' } }, required: ['scores', 'weaknesses', 'engineer', 'non_technical'] }
 const MERGED = { type: 'object', properties: { weaknesses: { type: 'array', items: WEAK } }, required: ['weaknesses'] }
@@ -17,7 +17,7 @@ const VERDICT = { type: 'object', properties: { real: { type: 'boolean' }, cause
 
 phase('Critique')
 const critics = (await parallel([1, 2, 3].map(i => () => agent(
-  `You are critic ${i} of 3, working independently. Read the file ${head} first: it is your full instruction (what happened on the machine, the five promises to score 1-10, then the five most important weaknesses each with a concrete harness-level fix, then what an expert engineer and a non-technical person would say). Then read the transcript file ${transcript} in full. Do not read or modify anything else. Every piece of evidence must be a verbatim quote from the transcript. Return the structured result only.`,
+  `You are critic ${i} of 3, working independently. Read the file ${head} first: it is your full instruction (what happened on the machine, the seven promises to score 1-10, then the five most important weaknesses each with a concrete harness-level fix, then what an expert engineer and a non-technical person would say). Then read the transcript file ${transcript} in full. Do not read or modify anything else. Every piece of evidence must be a verbatim quote from the transcript. Return the structured result only.`,
   { label: `critic-${i}`, phase: 'Critique', model: 'opus', effort: 'high', schema: CRITIC })))).filter(Boolean)
 log(`${critics.length} critics returned`)
 
@@ -50,7 +50,7 @@ const summary = await agent(
 
 const median = k => { const v = critics.map(c => c.scores[k]).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null }
 return {
-  medians: { watches: median('watches'), open_loops: median('open_loops'), rules: median('rules'), since_last: median('since_last'), sharper: median('sharper') },
+  medians: { watches: median('watches'), open_loops: median('open_loops'), rules: median('rules'), since_last: median('since_last'), sharper: median('sharper'), just_works: median('just_works'), autonomy: median('autonomy') },
   per_critic: critics.map(c => c.scores),
   engineer: critics.map(c => c.engineer), non_technical: critics.map(c => c.non_technical),
   confirmed, rig_issues, rejected, summary,

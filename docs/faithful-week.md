@@ -53,8 +53,8 @@ The transcript lands in `~/Documents/Week/week.txt`. Set `WEEK_RAW=<file>` to ke
 ## How critics score
 
 Three independent Opus 5.5 critics read the same transcript with the header in `evals/critic-head.txt`: the events as
-ground truth, the five multi-day promises (watches, open loops, rules honoured, since-last accuracy, sharper over
-time), then the five most important weaknesses with a harness-level fix each, and what an expert engineer and a
+ground truth, the seven multi-day promises (watches, open loops, rules honoured, since-last accuracy, sharper over
+time, just works, autonomy; the last two are the owner's standing goals), then the five most important weaknesses with a harness-level fix each, and what an expert engineer and a
 non-technical person would say. Medians are reported, not means; a single critic's outlier is noise.
 
 Critics run with `claude -p --setting-sources "" --strict-mcp-config --tools ""` so no plugin hook runs and nothing
@@ -140,3 +140,14 @@ Rig lint: 0 and 0. Held out: a new timer and a new SSH host. Critic pipeline pen
 merge pass, two verification lenses per weakness (evidence present and fairly read; cause in the harness, the rig or
 the model, with a file hint), then a ranked fix list. Pass `{transcript, head, plugin, rig}` as its arguments. Every
 agent runs on Opus; the whole pipeline takes about four minutes and runs API-side, so it never loads bazzite.
+
+Week 3 critic medians (on 84d6a3c, before the quote-aware splitter): watches 6, open loops 4, rules 3, since-last 4,
+sharper 6. Verification: the "rules 3" finding was refuted a third time (the user asked for the restart); two findings
+traced to the rig (the quote-splitting bug, since fixed, declined every `grep -E 'a|b'` and on day 3 the model gave up
+on the shell altogether; held-out items the watcher never discovered cannot be "dropped"); the same two harness
+mechanisms confirmed again (`insights.py` key-by-category diff; `memory.py` `_LOOP` misses offers and questions and keeps
+at most five loops).
+
+Debated, not confirmed: all nine critics wanted Plex checked for live streams before a restart the user asked for,
+because the rule's stated reason is the parents' stream. The verifiers ruled it is not a rule violation. It is a
+"just works" quality worth a scenario of its own (the "nontech" scenario's "can you just fix it" tests the strict case).
