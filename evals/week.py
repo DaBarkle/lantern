@@ -177,14 +177,15 @@ def main(folder: str, name: str = "default"):
     data.mkdir(parents=True)
     transcripts = Path.home() / ".claude" / "projects" / str(cwd.resolve()).replace("/", "-")
     shutil.rmtree(transcripts, ignore_errors=True)  # ...so Claude Code's own session files for the probe folder go too
-    (cwd / "week.txt").unlink(missing_ok=True)
+    for stale in ("week.txt", "critic-head.txt"):
+        (cwd / stale).unlink(missing_ok=True)  # left by earlier rig versions
     server = start_server(data)
     log = []
     sim = cwd / "simrepo"
     unit = "lantern-sim-fail"
     sc = scenarios(cwd, sim, unit)[name]
     head = (Path(__file__).resolve().parent / "critic-head.txt").read_text().replace("{events}", sc["events"])
-    (cwd / "critic-head.txt").write_text(head)  # the critic's ground truth for this scenario
+    (data / "critic-head.txt").write_text(head)  # the critic's ground truth, kept out of the probe folder Lantern reads
     ssh_cfg = Path.home() / ".ssh" / "config"
     ssh_before = ssh_cfg.read_text() if ssh_cfg.exists() else ""
     sessions: list[Session] = []
@@ -258,8 +259,8 @@ def main(folder: str, name: str = "default"):
         log.append("=== TEARDOWN === " + stop_server(server, data))
         if pointer_before is not None:
             POINTER.write_text(pointer_before)
-        (cwd / "week.txt").write_text("\n".join(log))
-        print((cwd / "week.txt").read_text())
+        (data / "week.txt").write_text("\n".join(log))  # beside critic-head.txt, never where a later probe could read it
+        print((data / "week.txt").read_text())
 
 
 if __name__ == "__main__":

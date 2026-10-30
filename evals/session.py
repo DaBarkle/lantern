@@ -22,8 +22,8 @@ PLAIN = {"ls", "cat", "head", "tail", "wc", "stat", "file", "df", "du", "free", 
          "printenv", "which", "type", "command", "grep", "rg", "sort", "uniq", "tr", "cut", "awk", "echo", "jq", "ss", "realpath",
          "readlink", "basename", "dirname", "test", "true", "nproc", "lscpu", "lsblk", "mount", "ps", "pgrep", "ip", "flatpak",
          "rpm-ostree", "crontab", "getent", "timedatectl", "journalctl", "loginctl", "systemd-analyze", "cd", "pwd", "lantern",
-         "lantern.py", "tree", "column", "paste", "diff", "md5sum", "sha256sum", "nl", "tac", "rev", "seq", "printf", "sleep"}
-SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch", "stash", "ls-files", "describe", "config", "tag"},
+         "lantern.py", "tree", "column", "paste", "diff", "cmp", "md5sum", "sha256sum", "nl", "tac", "rev", "seq", "printf", "sleep", "done", "fi"}
+SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch", "stash", "ls-files", "describe", "config", "tag", "worktree"},
        "systemctl": {"status", "show", "cat", "list-units", "list-timers", "list-unit-files", "is-active", "is-enabled", "is-failed",
                      "list-dependencies"},
        "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top"},
@@ -38,6 +38,10 @@ def _ok(toks: list[str]) -> bool:
         toks = toks[1:]
     if not toks:
         return True
+    if toks[0] == "for":  # `for x in a b; do cmd; done`: the header runs nothing, the body is checked as its own segments
+        return "do" not in toks or _ok(toks[toks.index("do") + 1:])
+    if toks[0] in ("do", "then", "else"):
+        return _ok(toks[1:])
     prog = os.path.basename(toks[0])
     if prog in WRAPPERS:
         rest = [t for t in toks[1:] if not t.startswith("-") and not re.fullmatch(r"\d+[smh]?", t)]
@@ -49,13 +53,15 @@ def _ok(toks: list[str]) -> bool:
     if prog == "find":
         return not any(t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls") for t in toks)
     if prog == "curl":
-        return not any(t in CURL_WRITES or t.startswith("-X") for t in toks)  # a GET is a read
+        drop = {i for i, t in enumerate(toks) if t == "/dev/null" and toks[i - 1] in ("-o", "--output")}
+        toks = [t for i, t in enumerate(toks) if i not in drop and i + 1 not in drop]  # "-o /dev/null" writes nothing
+        return not any(t in CURL_WRITES or t.startswith("-X") for t in toks)  # a GET is a read; -o /dev/null writes nothing
     if prog in SUB:
         words = [t for t in toks[1:] if not t.startswith("-") and "=" not in t]
         if (prog == "git" and "-C" in toks) or (prog == "virsh" and "-c" in toks):
             words = words[1:]  # the folder after git -C, the URI after virsh -c
-        if prog == "git" and "stash" in words:
-            return words[:2] == ["stash", "list"]
+        if prog == "git" and ("stash" in words or "worktree" in words):
+            return words[1:2] == ["list"]
         if prog == "git" and "config" in words:
             return "--get" in toks or "--list" in toks or "-l" in toks
         if prog == "podman" and words and words[0] in ("volume", "network"):
@@ -223,6 +229,8 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert allowed("curl -s localhost:32400/status/sessions | head -3") and not allowed("curl -X POST localhost:1/x") and allowed("virsh list --all")
     assert allowed("grep -iH -E 'AutoUpdate|Image=|Restart' ~/.config/containers/systemd/*plex* 2>&1") and allowed("grep -ril plex ~/.config | xargs -r grep -iH -E 'a|b'")
     assert not allowed("ls | xargs rm") and not allowed("echo x &> f") and allowed("systemctl --user list-units --all --no-pager 2>/dev/null | grep -i plex")
+    assert allowed("for c in a b; do virsh -c $c list --all 2>/dev/null; virsh -c $c domblklist Nyx; done") and not allowed("for f in *; do rm $f; done")
+    assert allowed("curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -o out.bin http://x") and allowed("git worktree list") and not allowed("git worktree add x")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"

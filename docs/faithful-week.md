@@ -48,7 +48,9 @@ cd <checkout>
 uv run --no-project evals/week.py ~/Documents/Week      # folder holds .lantern.json {"profile": "week"}
 ```
 
-The transcript lands in `~/Documents/Week/week.txt`. Set `WEEK_RAW=<file>` to keep every stream frame for debugging.
+The transcript lands in the profile's data folder (`~/.claude/plugins/data/lantern-inline/profiles/<profile>/week.txt`)
+next to `critic-head.txt`; nothing the rig writes for the critic is left where a probe could read it. Set
+`WEEK_RAW=<file>` to keep every stream frame for debugging.
 
 ## How critics score
 
@@ -180,3 +182,23 @@ With "just works" and autonomy added: watches 6, open loops 4, rules 3, since-la
 can act on, and that is exactly the bar the owner set. Verification again confirmed only the since-last diff and the
 open-loop handling; the Plex finding was again classed as the rig's (the user asked), and the "rules 3" median is
 therefore not a harness score.
+
+### 2026-10-30, week 5 on 34205d2 (clean baseline, hooks and commands in one folder)
+
+Rig lint 0/0, audit clean. Held out: the SSH host and the scratch file, both caught on day 2. Critic medians: watches 7,
+open loops 4, rules 7, since-last 5, sharper 5, just works 3, autonomy 5. Verification confirmed four harness defects
+and traced two to the rig:
+
+1. **Corrections do not survive.** Day 2 retracted a day-1 claim with evidence ("Correction: ... that open loop is
+   closed"); day 3 repeated the original claim as a top fix, because curation had stored the day-1 claim as a fact and
+   nothing records the model's own correction (`hooks.py` stop path, `curate.py` supersede). Impact 9.
+2. **The user is told to type syntax or run commands** (`secret NAME: <value>`, shell one-liners), text that comes from
+   Lantern's own instructions (`discovery.py`, `hooks.py`). A non-technical user cannot act on it.
+3. Open loops: offers and questions are not captured (`memory.py`), as in every week.
+4. Since-last digest: the discovery note is re-read for two days and the diff is not itemised (`insights.py`,
+   `discovery.py`), as in every week.
+
+Rig issues, both fixed: the rig had written the critic's ground truth (`critic-head.txt`) into the probe folder, and
+Lantern read it ("the night-2 commit described in the sim brief"), so critic files now live in the data folder; and the
+policy declined for-loops, `cmp`, `git worktree list` and `curl -o /dev/null`. Refuted: "can't reach Nyx" (Lantern has no
+grant there by design) and the Plex-before-streams complaint (the user asked).
