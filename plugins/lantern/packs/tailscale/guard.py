@@ -3,6 +3,8 @@ import json
 import re
 import sys
 
+DECISION = "deny"
+
 # Only a word in command position counts: the start of a command (after ; & | newline or a subshell), optionally
 # behind sudo/env/exec. Prose that mentions the tool in a heredoc or a quoted string is not a command.
 CMD = r"(?:^|[;&|(\n]\s*)(?:(?:sudo|exec|env|command|nohup|time)\s+(?:-\S+\s+|\w+=\S*\s+)*)?"

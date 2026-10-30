@@ -1,5 +1,5 @@
 ---
-name: tailscale
+name: lantern-tailscale
 description: Read-only Tailscale diagnosis (is a node online, which IP or name it has, why two devices can't reach each other). Use when the user mentions Tailscale, the tailnet, MagicDNS or reaching a machine remotely.
 ---
 # Tailscale (read-only)

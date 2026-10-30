@@ -20,7 +20,7 @@ plugins/lantern/            the core plugin
   lantern_core/             memory, recall hooks, ledger, curation, stage, shield (keychain and manager bridges), doctor, discovery (and frontiers), jobs, approvals, sshkey
   commands/                 /lantern:* commands
   tests/                    unittest, run with uv
-plugins/lantern-*/          packs: skills, optional guards
+plugins/lantern/packs/      packs: one folder per system, SKILL.md plus an optional guard.py
 evals/                      replay.py scores recall on your own transcripts; week.py simulates a week (both need Claude Code)
 .github/workflows/ci.yml    tests on Linux, macOS and Windows
 ```
@@ -37,7 +37,7 @@ A shortcut with a known limit is fine when marked in the code as `shortcut: <the
 
 ## Packs
 
-A pack is a plugin with a `skills/` folder and, optionally, a `hooks/` guard. Keep skills read-first: diagnose before changing, and stage any change for the user's approval. A guard is a `PreToolUse` hook with a tested deny or ask list; see `plugins/lantern-tailscale/guard.py` and `plugins/lantern-docker/guard.py`. `tests/test_packs.py` checks every pack's skill (read-first order, no terminal step for the user, secrets by name) and that each guard enforces what its skill text promises.
+A pack is a folder under `plugins/lantern/packs/` with a `SKILL.md` (frontmatter `name: lantern-<folder>`) and, optionally, a `guard.py` with `check(command) -> reason | None` and `DECISION = "ask" | "deny"`. Add the finds that switch it on to `TRIGGERS` in `lantern_core/packs.py`. Switching on copies the skill into the user's skills folder (Claude Code watches it, so it appears in the running session) and the core `PreToolUse` hook runs the guard; nothing is installed and no restart is needed. Keep skills read-first: diagnose before changing, and stage any change for the user's approval; see `packs/tailscale/guard.py` and `packs/docker/guard.py`. `tests/test_packs.py` checks every pack's skill (read-first order, no terminal step for the user, secrets by name), that each guard enforces what its skill text promises, and that switching on and off works without a restart.
 
 ## Reporting a problem
 

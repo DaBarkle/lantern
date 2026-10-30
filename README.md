@@ -48,7 +48,7 @@ No model call ever sits on the prompt path. A prompt costs Lantern about 150 mil
 
 ## Packs
 
-Packs add skills for the systems you run and can enforce your rules structurally. Each is its own plugin in this marketplace: `lantern-docker` (asks before anything that deletes containers, images or volumes), `lantern-media-server` (Plex, Jellyfin, the *arr apps), `lantern-home-assistant`, `lantern-unifi`, `lantern-tailscale` (read-only; it blocks any command that would change your tailnet). Discovery tells you which ones fit.
+Packs add skills for the systems you run and can enforce your rules structurally: `docker` (asks before anything that deletes containers, images or volumes), `media-server` (Plex, Jellyfin, the *arr apps), `home-assistant`, `unifi`, `tailscale` (read-only; it blocks any command that would change your tailnet). They ship inside the plugin and switch on by themselves the moment discovery finds their system, in the same session: nothing to install, no restart. Say "turn on the X pack" to switch one on by hand; its skill appears as `/lantern-X`.
 
 ## How it works
 

@@ -23,6 +23,7 @@ USAGE = """usage: lantern.py hook <name>
        lantern.py approve setup | "<question>" [--timeout SECONDS]
        lantern.py alerts [on | off | kinds failed,down,disk,backup]   (phone line per newly tripped watch)
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
+       lantern.py pack | pack on NAME | pack off NAME      (skills for found systems; on by themselves, no install, no restart)
        lantern.py job curate | doctor | discover | watch   (what the schedule runs)
        lantern.py schedule [--apply]           (show, or install, the nightly jobs and the hourly watch)"""
 
@@ -117,6 +118,9 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["stage"]:
         return stage_cli(argv[1:])
+    if argv[:1] == ["pack"]:
+        from lantern_core import packs
+        return packs.cli(argv[1:])
     if argv[:1] == ["secret"]:
         return shield.cli(argv[1:])
     if argv[:1] == ["ssh"]:

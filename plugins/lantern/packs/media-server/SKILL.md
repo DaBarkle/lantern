@@ -1,5 +1,5 @@
 ---
-name: media-server
+name: lantern-media-server
 description: Diagnose a home media stack (Plex or Jellyfin, Sonarr, Radarr, Lidarr, Prowlarr, a download client, Overseerr/Jellyseerr, Tautulli, Tdarr, Bazarr). Use for playback problems, missing or stuck downloads, requests, or library issues.
 ---
 # Media stack

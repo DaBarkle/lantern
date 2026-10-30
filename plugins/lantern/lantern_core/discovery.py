@@ -414,6 +414,8 @@ def accept(finds: list[dict]) -> None:
     finally:
         db.close()
     save_settings(s)
+    from . import packs
+    packs.for_finds(finds)  # a pack switches on the moment its system is found: no install, no restart
 
 
 def healthy(check: dict) -> bool | None:
@@ -439,11 +441,6 @@ def healthy(check: dict) -> bool | None:
     if t == "winservice":
         return "RUNNING" in _run(["sc", "query", check["name"]])
     return None
-
-
-PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "lantern-tailscale", "Home Assistant": "lantern-home-assistant",
-         "Plex": "lantern-media-server", "Jellyfin": "lantern-media-server", "Sonarr": "lantern-media-server", "Radarr": "lantern-media-server",
-         "UniFi Network": "lantern-unifi"}
 
 
 KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
