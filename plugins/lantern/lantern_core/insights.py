@@ -46,12 +46,19 @@ def repos(caps: dict, now: float | None = None) -> list[tuple[str, str, float]]:
     return out
 
 
-def _reclaimable() -> str:
-    """What `podman system df` says could be freed, as one phrase, or ''."""
+def _reclaimable(now: float | None = None) -> str:
+    """What `podman system df` says could be freed, as one phrase, or ''. podman walks every image layer for this
+    (1.6 s on a 54-image box), so the answer is kept for an hour; the disk check itself stays live."""
+    s = discovery.settings()
+    now = now or time.time()
+    if now - s.get("reclaimable_at", 0) < FRESH_SECONDS:
+        return s.get("reclaimable", "")
     text = discovery._run(["podman", "system", "df", "--format", "{{.Type}} {{.Reclaimable}}"])
     parts = [l.split(" ", 1) for l in text.splitlines() if " " in l]
     freeable = [f"{p[1].split('(')[0].strip()} of {p[0].lower()}" for p in parts if p[1].strip() and not p[1].startswith("0B")]
-    return "; podman could free " + ", ".join(freeable) if freeable else ""
+    phrase = "; podman could free " + ", ".join(freeable) if freeable else ""
+    discovery.update_settings(reclaimable=phrase, reclaimable_at=now)
+    return phrase
 
 
 def disk() -> list[tuple[str, str, float]]:
@@ -115,20 +122,21 @@ def down(caps: dict) -> list[tuple[str, str, float]]:
 def failed_units() -> list[tuple[str, str, float]]:
     """Failed systemd units, user and system scope, with the telling journal lines already read."""
     out = []
-    for scope in (["--user"], []):  # the user's units and the system's (an updater or logrotate failing matters too)
-        failed = discovery._run(["systemctl", *scope, "--failed", "--no-legend", "--plain"]).splitlines()
-        for line in failed[:5]:
-            unit = line.split()[0] if line.split() else ""
-            if not unit:
-                continue
-            log = [l for l in discovery._run(["journalctl", *scope, "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as pool:  # each unit costs two slow reads (journal, show): all of them at once, not in turn
+        scopes = list(pool.map(lambda scope: discovery._run(["systemctl", *scope, "--failed", "--no-legend", "--plain"]).splitlines(), (["--user"], [])))
+        units = [(scope, line.split()[0]) for scope, failed in zip((["--user"], []), scopes) for line in failed[:5] if line.split()]
+        logs = pool.map(lambda su: discovery._run(["journalctl", *su[0], "-u", su[1], "-n", "30", "--no-pager", "-o", "cat"]), units)
+        shows = pool.map(lambda su: discovery._run(["systemctl", *su[0], "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", su[1]]), units)
+        for (scope, unit), log_text, show_text in zip(units, logs, shows):
+            log = [l for l in log_text.splitlines() if l.strip()]
             boiler = ("Started ", "Starting ", "Stopped ", "Stopping ", "Consumed ", "Scheduled restart", "Failed with result", "Main process exited")
             telling = [l for l in log if not l.startswith(boiler) and not l.startswith(unit)][-3:]
             exits = [l for l in log if "code=" in l or "status=" in l]
             cause = (f"; journal, already read by Lantern: " + " | ".join(t[:120] for t in telling) if telling else "") + (f"; {exits[-1][:120]}" if exits else "")
             if not telling and not exits:
                 cause = "; the journal has no lines for it (the unit may have been created transiently or logs are rotated)"
-            show = dict(l.split("=", 1) for l in discovery._run(["systemctl", *scope, "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
+            show = dict(l.split("=", 1) for l in show_text.splitlines() if "=" in l)
             when = show.get("InactiveEnterTimestamp", "")
             detail = f" (result {show.get('Result', '?')}, exit status {show.get('ExecMainStatus', '?')}, at {when})" if show else ""
             note = "; exit 137 at a logout or shutdown means systemd stopped it, not a crash" if show.get("ExecMainStatus") == "137" else ""
