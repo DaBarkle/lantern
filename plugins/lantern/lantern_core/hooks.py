@@ -288,7 +288,10 @@ def session_start(payload: dict) -> dict | None:
     if moved:
         tail_block += [moved]
     if bigfiles:
-        tail_block += ["New large files near the user's work (name each in the reply and say what it is before anyone deletes it): " + "; ".join(bigfiles)]
+        seen_big = set((discovery.settings().get("since_last") or {}).get("bigfiles") or [])
+        tail_block += ["Large files near the user's work (name each in the reply; say what it is before anyone deletes it): "
+                       + "; ".join(("still there, already reported: " if b in seen_big else "NEW: ") + b for b in bigfiles)]
+        discovery.update_settings(since_last={**(discovery.settings().get("since_last") or {}), "bigfiles": bigfiles})
     if found_new:
         tail_block += [found_new]
     tail_block += [open_block]
@@ -781,7 +784,7 @@ def stop_nudge(payload: dict) -> dict | None:
     gaps = _UNCHECKED.findall(turn["reply"])
     if not gaps:
         return None
-    return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
+    return {"decision": "block", "reason": "Your reply says " + "; ".join('\"' + g.strip() + '\"' for g in gaps[:4]) + ". If a read-only command on this machine "
             "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
             "sentences that simply states what you found; if the earlier sentence said you had not looked, say plainly that you "
             "now have (no 'Correction', no 'I checked'). If nothing here can answer it, add one clause on what would. Never "
@@ -791,7 +794,7 @@ def stop_nudge(payload: dict) -> dict | None:
 def subagent_stop(payload: dict) -> dict | None:
     """What an agent found is worth as much as what the main session said: keep its final text."""
     path = payload.get("agent_transcript_path") or ""
-    msgs = transcript.messages(path)
+    msgs = transcript.messages(path, sidechain=True)  # every line of an agent transcript is marked sidechain
     reply = next((t for r, t in reversed(msgs) if r == "assistant"), "")
     if not reply.strip():
         return None
