@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-31)
 
 Measured against simulated weeks on a real machine; the first session is stronger and the sessions after it are honest.
+
+- Every hook entry point runs against a returning-session fixture in the test suite and in the doctor, so a crashing hook can never sit silently on a live install.
+- Session start takes about a quarter of a second (podman's reclaimable figure is kept for an hour; failed units are read in parallel).
+- Lantern's own scheduled jobs are checked: a failed nightly run is a finding, and a unit naming a bare `uv` is repointed by itself.
+- A timer found overnight stays a new finding for three days, so the next session reports it.
+- Stop-hook feedback is part of the turn, never a new one; the last reply's text is always captured; subagent reports are stored.
 
 - First reply is text before any tool call; the wider look (containers, VMs, services, apps, SSH hosts, local servers) runs read-only in the first session without asking, and "look less" narrows it.
 - Nothing outside Claude: the user is never shown a command or syntax. A key or password is offered as a choice (paste it next, use the password manager, or not now); the value pasted on its own goes to the keychain before the model sees it. A Plex token the machine already holds is found in Plex's own settings file and stored, not asked for.
