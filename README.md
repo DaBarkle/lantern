@@ -43,7 +43,7 @@ No model call ever sits on the prompt path. A prompt costs Lantern about 150 mil
 | `/lantern:remember <text>` | Add something yourself |
 | `/lantern:forget <words>` | Drop something |
 | `/lantern:discover` | See what was found on this machine |
-| `/lantern:depth` | How much of the machine Lantern may look at (1 conversations, 2 workspace, 3 home, 4 life) |
+| `/lantern:depth` | How much of the machine Lantern may look at (1 conversations, 2 workspace, 3 home) |
 | `/lantern:doctor` | Full self-check |
 
 ## Packs
