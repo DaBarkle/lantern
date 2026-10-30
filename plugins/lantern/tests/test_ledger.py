@@ -219,3 +219,33 @@ class AutoDiscoveryTest(unittest.TestCase):
             db.close()
             ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("docker", ctx)
+
+
+class StatusTest(unittest.TestCase):
+    def test_one_plain_line(self):
+        from lantern_core import stage, status
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "fact", "curate:x", "Plex runs on bazzite as the container-plex user service.")
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                hooks.user_prompt_submit({"prompt": "where does plex run on bazzite", "session_id": "s"})
+            s = status.line()
+            self.assertTrue(s.startswith("Lantern: 1 note recalled last turn"), s)
+            self.assertIn("learned 1 today", s)
+            self.assertIn("all well", s)
+            db = memory.connect()
+            stage.publish(db, "doctor/x", "doctor", "memory capture stopped", score=8)
+            db.close()
+            self.assertIn("needs you: memory capture stopped", status.line())
+
+
+class OnboardingTest(unittest.TestCase):
+    def test_first_session_offers_setup_only_once(self):
+        from lantern_core import discovery
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            ctx = hooks.session_start({"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("/lantern:setup", ctx)
+            discovery.cli(["depth", "2"])
+            ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("/lantern:setup", ctx)

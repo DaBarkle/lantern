@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lantern_core import approvals, curate, discovery, doctor, hooks, memory, schedule, shield, stage  # noqa: E402
 
 USAGE = """usage: lantern.py hook <name>
-       lantern.py doctor
+       lantern.py doctor | status
        lantern.py stage list | note <message> [--key K] [--score 1-10] [--days N] | resolve <key>
        lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME
        lantern.py remember <text> | forget <query> | forget --id N | recall <query> | profile
@@ -84,6 +84,10 @@ def main(argv: list[str]) -> int:
         return hooks.run(argv[1])
     if argv[:1] == ["doctor"]:
         return doctor.cli()
+    if argv == ["status"]:
+        from lantern_core import status
+        print(status.line())
+        return 0
     if argv[:1] == ["stage"]:
         return stage_cli(argv[1:])
     if argv[:1] == ["secret"]:

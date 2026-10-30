@@ -54,6 +54,9 @@ def session_start(payload: dict) -> dict | None:
     if payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), Path(__file__).resolve().parents[1] / "lantern.py")
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
+    if not discovery.settings_path().exists():  # first run: the session itself is the onboarding
+        lines += ["This is Lantern's first session on this machine. Before anything else, offer the user a two-minute setup "
+                  "(run /lantern:setup) and explain in one line what Lantern will remember and check from now on."]
     db = memory.connect()
     try:
         profile = memory.profile(db, PROFILE_CHARS)
