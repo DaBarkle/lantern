@@ -105,8 +105,13 @@ you cannot verify something, look for file evidence (state files, logs, last-run
 Before proposing any fix, check it against the user's rules, the pending defaults above and the other open findings:
 a fix that moves personal or finance data to another machine, or that worsens another finding, is ordered after the
 fix that removes the risk, and said so. A finding that disappeared is explained by the since-last-session line; never
-say it "dropped off". Open a session-two reply with one line on what changed since last time (from the since-last line
-and where the last session left off), then the answer. Speak in the first person about your own earlier scan ("my scan
+say it "dropped off". Open a returning session's reply with two sentences: what changed since last time (from the since-last line, the
+watches line and where the last session left off) and what Lantern did about it; if nothing changed, say so. If a fact,
+priority or remedy differs from what Lantern said before, say "Correction:" with the reason; never drop a finding
+silently. When a finding reverses a choice the user made on purpose (a file or comment saying so), name that choice
+and ask before recommending its reversal. Never headline a finding whose location you do not know; ask where it lives.
+If you cannot run something because this session has no shell, say what Lantern will do once it can, never a command
+for the user to run. Speak in the first person about your own earlier scan ("my scan
 earlier found"), never as if another agent did it. Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
@@ -121,6 +126,7 @@ def session_start(payload: dict) -> dict | None:
         discovery.auto()  # the first reply should already know this machine: look at the workspace now, within the depth default
         discovery.save_settings({**discovery.settings(), "first_session": payload.get("session_id", "?")})
         survey.start()  # the deeper understanding arrives a few minutes in
+        discovery.save_settings({**discovery.settings(), "pending": ["purpose", "guardrails", "wider"]})
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
@@ -208,6 +214,14 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour):", attention]
     if moved:
         lines += [moved]
+    if not first:
+        at = discovery.settings().get("insights_at")
+        lines += [f"Lantern's watches (failed services, disk, unpushed work, known services) last ran at "
+                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}; their findings are the Stage above."]
+        if discovery.settings().get("answered_at"):
+            lines += ["The setup questions were answered (guardrails and profile above are in force)."]
+        elif discovery.settings().get("pending"):
+            lines += ["The setup questions from the first session were never answered; defaults apply (see open loop below)."]
     lines += ["", (FIRST_RUN if first else EVERY_SESSION).format(entry=entry)]
     return _context("SessionStart", "\n".join(lines))
 
@@ -216,6 +230,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
+    answered = setup_answer(prompt)
     name = shield.paste(prompt)
     if name:  # a secret handed over in chat: it is now in the keychain and this message never reaches the model
         db = memory.connect()
@@ -314,12 +329,44 @@ def user_prompt_submit(payload: dict) -> dict | None:
     progress = survey.status()
     if progress:
         lines.append(progress)
+    if answered:
+        lines += [answered]
     if noted:
         lines += ["Lantern stored this message as a standing rule for future sessions; acknowledge it in a few words."]
     reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
     if noted:
         reply["systemMessage"] = "Lantern noted a standing rule from your message."
     return reply or None
+
+
+GUARDRAILS = ["Never restart a service or container on this machine without asking first.",
+              "Never push or copy folders that look personal (family, finance) off this machine.",
+              "Ask before changing the operating system (rpm-ostree, system config, system-wide services)."]
+YES = re.compile(r"^\s*(?:ok(?:ay)?|yes|yep|sure|all|all of them|both|go ahead|do it|fine|sounds good)\b[.!]?\s*$", re.I)
+
+
+def setup_answer(prompt: str) -> str | None:
+    """The first session asks what the machine is for, which guardrails to keep, and whether to look wider. A short yes
+    answers all three; the hook records it so the answer holds even if the model has no shell, and so session two knows."""
+    s = discovery.settings()
+    pending = s.get("pending") or []
+    if not pending or not YES.match(prompt):
+        return None
+    db = memory.connect()
+    try:
+        for rule in GUARDRAILS:
+            memory.add(db, "rule", "setup", rule)
+        memory.add(db, "profile", "setup", "Confirmed Lantern's reading of this machine: " + (discovery.summary() or "a personal machine") + ".")
+    finally:
+        db.close()
+    s["pending"] = []
+    s["depth"] = max(3, s.get("depth", 2))
+    s["answered_at"] = time.time()
+    discovery.save_settings(s)
+    jobs.start(["discover"], Path(__file__).resolve().parents[1] / "lantern.py")
+    return ("The user accepted the setup as proposed: Lantern recorded the three guardrails as rules, confirmed the machine's "
+            "purpose as the profile, and started the wider look in the background (its finds show at the next session start "
+            "or on Stage). Acknowledge in one line; do not repeat the questions.")
 
 
 def note_correction(db, session: str, prompt: str) -> int | None:

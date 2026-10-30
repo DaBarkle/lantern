@@ -35,13 +35,14 @@ def repos(caps: dict, now: float | None = None) -> list[tuple[str, str, float]]:
         remote = _git(d, "remote")
         last = _git(d, "log", "-1", "--format=%ct")
         age = (now - int(last)) / 86400 if last.isdigit() else None
+        where = d.replace(str(Path.home()), "~")
         if dirty or ahead:
             what = " and ".join(p for p in (f"{dirty} uncommitted change(s)" if dirty else "", "unpushed commits" if ahead else "") if p)
-            out.append((f"insight/repo-risk/{d}", f"{c['name']} has {what}" + ("" if remote else " and no git remote (check whether a backup job covers the folder before calling it unbacked)"), 5))
+            out.append((f"insight/repo-risk/{d}", f"{c['name']} ({where}) has {what}" + ("" if remote else " and no git remote (check whether a backup job covers the folder before calling it unbacked)"), 5))
         elif not remote and age is not None and age < STALE_DAYS:
-            out.append((f"insight/repo-noremote/{d}", f"{c['name']} is active but has no git remote (unbacked unless a backup job covers it)", 4))
+            out.append((f"insight/repo-noremote/{d}", f"{c['name']} ({where}) is active but has no git remote (unbacked unless a backup job covers it)", 4))
         elif age is not None and age > STALE_DAYS:
-            out.append((f"insight/repo-stale/{d}", f"{c['name']} has had no commit for {int(age)} days", 2))
+            out.append((f"insight/repo-stale/{d}", f"{c['name']} ({where}) has had no commit for {int(age)} days", 2))
     return out
 
 

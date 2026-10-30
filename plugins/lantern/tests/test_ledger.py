@@ -350,8 +350,8 @@ class InsightsTest(unittest.TestCase):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
             self.assertIn("1 finding(s) resolved", line)
             self.assertIn("dirty: now clean, still no remote", line)  # a vanished finding is explained, never dropped
-            self.assertTrue(any("dirty has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
-            self.assertTrue(any("clean is active but has no git remote" in m for m in msgs), msgs)
+            self.assertTrue(any("dirty (" in m and "has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
+            self.assertTrue(any("clean (" in m and "is active but has no git remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
             db.close()
 
@@ -403,3 +403,21 @@ class InsightDetailsTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("plex.service has PLEX_CLAIM written in plain text", found[0][1])
         self.assertNotIn("abcdef", found[0][1])
+
+
+class SetupAnswerTest(unittest.TestCase):
+    def test_a_short_yes_records_guardrails_profile_and_wider_look(self):
+        from lantern_core import discovery
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            hooks.session_start({"session_id": "s1"})  # first session: questions pending
+            self.assertEqual(discovery.settings()["pending"], ["purpose", "guardrails", "wider"])
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                self.assertIsNone(hooks.user_prompt_submit({"prompt": "what is a quadlet?", "session_id": "s1"}))
+                r = hooks.user_prompt_submit({"prompt": "ok", "session_id": "s1"})
+            self.assertIn("accepted the setup", r["hookSpecificOutput"]["additionalContext"])
+            self.assertEqual(discovery.settings()["pending"], [])
+            self.assertEqual(discovery.settings()["depth"], 3)
+            ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Never restart a service or container", ctx)
+            self.assertIn("setup questions were answered", ctx)
+            self.assertIn("Lantern's watches", ctx)
