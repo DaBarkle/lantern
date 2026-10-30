@@ -121,3 +121,31 @@ class ScheduleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnJobsTest(unittest.TestCase):
+    def test_a_failed_nightly_job_is_a_finding_and_a_bare_uv_is_repointed(self):
+        from lantern_core import discovery
+        entry = Path("/p/lantern.py")
+        shows = {"lantern-curate.service": "LoadState=loaded\nExecStart={ path=uv ; argv[]=uv run --no-project x }\nExecMainStatus=203\nExecMainExitTimestamp=Sat 2026-10-31 03:00:00 AEDT\n",
+                 "lantern-doctor.service": "LoadState=loaded\nExecStart={ path=/opt/uv ; argv[]=/opt/uv run x }\nExecMainStatus=1\nExecMainExitTimestamp=Sat 2026-10-31 04:00:00 AEDT\n",
+                 "lantern-watch.service": "LoadState=not-found\n"}
+
+        def run(cmd):
+            if cmd[:3] == ["systemctl", "--user", "show"]:
+                return shows[cmd[-1]]
+            if cmd[0] == "journalctl":
+                return "lantern-doctor.service: Main process exited, code=exited, status=1/FAILURE\nError: no space left\n"
+            return ""
+        applied = []
+        with mock.patch.object(discovery, "_which", return_value="/usr/bin/systemctl"), mock.patch.object(discovery, "_run", side_effect=run), \
+                mock.patch.object(schedule, "apply", side_effect=lambda p: applied.append(p)), mock.patch.object(schedule, "_uv", return_value="/opt/uv"), \
+                mock.patch.object(schedule.sys, "platform", "linux"), mock.patch.object(schedule, "linux_scheduler", return_value="systemd"):
+            found = schedule.real_own_jobs(entry)
+        self.assertEqual([k for k, _, _ in found], ["insight/own-job/curate", "insight/own-job/doctor"])
+        self.assertIn("now names /opt/uv", found[0][1])  # the bare uv was repointed
+        self.assertEqual(len(applied), 1)
+        self.assertIn("ExecStart=/opt/uv run", next(iter(applied[0]["files"].values())))
+        self.assertIn("failed at Sat 2026-10-31 04:00:00 AEDT (exit 1; Error: no space left)", found[1][1])
+        with mock.patch.object(discovery, "_which", return_value=None):
+            self.assertEqual(schedule.real_own_jobs(entry), [])  # no systemctl here: nothing to check

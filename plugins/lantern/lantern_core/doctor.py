@@ -161,6 +161,16 @@ def check_resources():
     return OK, "memory headroom ok" if free is None else f"{free:,} MB free"
 
 
+def check_own_jobs():
+    """Lantern's own scheduled jobs (curate, doctor, watch) last ran cleanly; a bare `uv` in a unit is repointed."""
+    from . import schedule
+    from pathlib import Path
+    found = schedule.own_jobs(Path(__file__).resolve().parents[1] / "lantern.py")
+    if not found:
+        return OK, "Lantern's own scheduled jobs ran cleanly (or none are scheduled here)"
+    return WARN, "; ".join(m for _, m, _ in found)
+
+
 def check_status_line():
     status, msg, _ = statusline.ensure()  # repairs a stale command itself, as with the memory server
     return (OK if status == "ok" else WARN), msg
@@ -184,7 +194,7 @@ def check_hook_smoke():
     return OK, "every hook runs clean on a returning session"
 
 
-CHECKS = {"data-dir": check_data_dir, "hook-smoke": check_hook_smoke, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
+CHECKS = {"data-dir": check_data_dir, "hook-smoke": check_hook_smoke, "own-jobs": check_own_jobs, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
           "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "hook-errors": check_hook_errors,
           "resources": check_resources, "packs": check_packs}
 

@@ -19,7 +19,7 @@ def _transcript(path: Path) -> None:
 
 def run(verbose: bool = False) -> list[str]:
     """Problems found, as strings ('<hook>: <error>'); empty when every hook ran clean."""
-    from . import alerts, discovery, doctor, hooks, jobs, memory, packs, paths, statusline, survey
+    from . import alerts, discovery, doctor, hooks, jobs, memory, packs, paths, schedule, statusline, survey
     problems = []
     with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
         home = Path(d)
@@ -29,7 +29,8 @@ def run(verbose: bool = False) -> list[str]:
         for mod, name, value in [(jobs, "start", lambda *a, **k: []), (doctor, "start_server", lambda: None),
                                  (survey, "start", lambda *a, **k: False), (discovery, "discover", lambda depth: []),
                                  (discovery, "frontiers", lambda: []), (alerts, "ensure_scheduled", lambda *a, **k: False),
-                                 (statusline, "settings_file", lambda: home / "settings.json"), (packs, "sync", lambda *a, **k: [])]:
+                                 (statusline, "settings_file", lambda: home / "settings.json"), (packs, "sync", lambda *a, **k: []),
+                                 (schedule, "own_jobs", lambda *a, **k: [])]:
             stack.enter_context(mock.patch.object(mod, name, value))
         transcript = home / "t.jsonl"
         _transcript(transcript)

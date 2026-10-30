@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, alerts, discovery, doctor, insights, jobs, memory, packs, register, resources, semantic, shield, stage, statusline, survey, transcript
+from . import __version__, alerts, discovery, doctor, insights, jobs, memory, packs, register, resources, schedule, semantic, shield, stage, statusline, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -196,6 +196,8 @@ def session_start(payload: dict) -> dict | None:
         moved = ""
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
+            for key, msg, score in schedule.own_jobs(entry):  # a failed nightly job of Lantern's own is a finding like any other
+                stage.publish(db, key, "insight", msg, score=score, days=1)
             alerts.run(db, send=False)  # the user sees them here; the phone only hears what trips while they are away
             alerts.ensure_scheduled(entry)  # the hourly check installs itself once the phone can be reached
             discovery.refresh_frontiers()  # and what is beyond reach closes by itself once its key or sign-in is there

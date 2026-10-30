@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import discovery
+from .paths import data_dir
 
 
 def _uv() -> str:
@@ -109,3 +110,37 @@ def apply(p: dict) -> None:
         path.write_text(text)
     for argv in p["commands"]:
         subprocess.run(_host(argv), check=True)  # the container's systemctl or crontab cannot reach the host's; ask the host
+
+
+JOBS = {"curate": 3, "doctor": 4, "watch": None}  # job: hour (None = hourly), as `lantern schedule` plans them
+
+
+def own_jobs(entry: Path, repair: bool = True) -> list[tuple[str, str, float]]:
+    """Did Lantern's own scheduled jobs last run cleanly? Findings for the Stage, so the since-last block reports a
+    nightly curation that failed; systemd marks such a unit Result=success once the timer rearms, so the exit status
+    and the journal are what count. A unit whose ExecStart names a bare `uv` (which a timer's PATH lacks: 203/EXEC)
+    is re-planned with the resolved path when repair is on."""
+    if sys.platform in ("win32", "darwin") or not discovery._which("systemctl"):
+        return []  # shortcut: launchd and Task Scheduler runs are not checked yet; the nightly doctor still runs in-session
+    out = []
+    for job, hour in JOBS.items():
+        unit = f"lantern-{job}.service"
+        show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "ExecStart,ExecMainStatus,ExecMainExitTimestamp,LoadState", unit]).splitlines() if "=" in l)
+        if show.get("LoadState", "not-found") == "not-found" or not show.get("ExecStart"):
+            continue
+        bare = "path=uv ;" in show["ExecStart"] or "argv[]=uv " in show["ExecStart"]
+        if bare and repair:
+            try:
+                apply(plan(job, hour, entry, data=data_dir()))
+                out.append((f"insight/own-job/{job}", f"Lantern's own {job} job pointed at a bare `uv`, which a timer cannot find; "
+                            f"it now names {_uv()} and runs again from its next time", 2))
+                continue
+            except (OSError, subprocess.CalledProcessError):
+                pass
+        status = show.get("ExecMainStatus", "0")
+        if status not in ("", "0"):
+            log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "5", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
+            why = next((l for l in reversed(log) if "Unable to locate" in l or "Error" in l or "error" in l), log[-1] if log else "no journal line")
+            out.append((f"insight/own-job/{job}", f"Lantern's own {job} job failed at {show.get('ExecMainExitTimestamp', '?')} (exit {status}; "
+                        f"{why[:120]}); " + ("a bare `uv` in the unit: run `lantern schedule --apply` to repoint it" if "locate executable 'uv'" in why else "the next session start runs it again in the background"), 3))
+    return out
