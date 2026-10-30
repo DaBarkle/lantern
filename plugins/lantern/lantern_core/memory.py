@@ -179,32 +179,96 @@ def rule_items(db: sqlite3.Connection) -> list[tuple[int, str]]:
 LEDGER_KEEP = 20
 
 
+LOOPS_KEEP = 12  # open loops carried per session; the oldest fall off once a session holds more
+RESUME_HOURS = 48
+PROJECT_RESUME_DAYS = 14  # a session in the same folder is worth resuming for longer than one anywhere
+
+
 def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, now: float | None = None) -> dict:
-    """Fold one turn (from transcript.last_turn) into the session's ledger: what it set out to do, what it touched."""
+    """Fold one turn (from transcript.last_turn) into the session's ledger: what it set out to do, what it touched.
+    Open loops are inherited from the previous session and kept until a reply addresses them, so a question asked
+    on day 1 is still open on day 3 unless it was answered."""
     now = now or time.time()
     row = db.execute("SELECT data, started FROM ledger WHERE session=?", (session,)).fetchone()
-    d = json.loads(row[0]) if row else {"goal": turn["user"][:400], "files": [], "commands": [], "agents": [], "failed": 0, "turns": 0}
+    if row:
+        d = json.loads(row[0])
+    else:
+        prior = previous_session(db, session, cwd, now)
+        d = {"goal": turn["user"][:400], "files": [], "commands": [], "agents": [], "failed": 0, "turns": 0,
+             "loops": list(prior.get("loops", [])) if prior else []}
     for k in ("files", "commands", "agents"):
         d[k] = list(dict.fromkeys(d[k] + turn.get(k, [])))[-LEDGER_KEEP:]
     d["failed"] += turn.get("failed", 0)
     d["turns"] += 1
     d["last"] = turn["user"][:400]
     d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
-    d["loops"] = list(dict.fromkeys(d.get("loops", []) + open_loops(turn.get("reply", ""))))[-8:]  # across the session
+    kept = [l for l in d.get("loops", []) if not addresses(turn.get("reply", ""), l)]  # done, re-asked or retired
+    d["loops"] = list(dict.fromkeys(kept + open_loops(turn.get("reply", ""))))[-LOOPS_KEEP:]
     with db:
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
     return d
 
 
-_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
-                   r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{6,220})")
+_SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or version does not end it
+_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
+                   r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
+                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me if|Say the word|If you want me to|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
 
 
-def open_loops(reply: str, limit: int = 5) -> list[str]:
-    """Promises and gaps the assistant stated in its reply ("I didn't check X", "Next, I can Y"), so the next session
-    closes or re-asks them instead of repeating them."""
-    return [m.group(1).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+def open_loops(reply: str, limit: int = 8) -> list[str]:
+    """Promises, gaps, offers and questions the assistant stated in its reply ("I didn't check X", "Next, I can Y",
+    "Should I Z?"), so the next session closes or re-asks them instead of repeating them."""
+    return [(m.group(1) or m.group(2)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+
+
+_GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before "
+                     "after right again since while where other first might maybe being doing going would wants want needs need".split())
+
+
+def _content(text: str) -> set[str]:
+    """The words a loop is really about: identifiers (paths, units, ports) and longer words that are not filler."""
+    return {w for w in terms(text) if any(c in w for c in "./-_0123456789") or (len(w) >= 5 and w not in _GENERIC)}
+
+
+def addresses(reply: str, loop: str) -> bool:
+    """A reply addresses a loop when it reuses most of what the loop is about: the thing was done, re-asked or retired.
+    One shared word ("firewall", "6006") is a mention, not a closure."""
+    want = _content(loop)
+    return len(want) >= 2 and len(want & _content(reply)) >= min(3, len(want))  # a one-word loop is retired by the cap, not by a mention
+
+
+def previous_session(db: sqlite3.Connection, session: str, cwd: str, now: float | None = None) -> dict | None:
+    """The session to resume from: the last one in this folder within two weeks, else the last one anywhere within two
+    days."""
+    now = now or time.time()
+    prior = ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd, now=now) if cwd else None
+    if prior and prior["cwd"] != cwd and now - prior["updated"] > RESUME_HOURS * 3600:
+        prior = None  # another folder's session only counts while it is fresh
+    return prior or ledger_last(db, session, RESUME_HOURS * 3600, now=now)
+
+
+_CORRECTION = re.compile(r"(?:^|\n|(?<=[.!?] ))\W{0,4}(?:Correction|Retraction|I was wrong|That was wrong|That was incorrect|To correct (?:my|an) earlier)\b\W{0,3}(?:[^:\n]{0,40}:)?[\s*]*([^\n]{12,400})", re.I)
+
+
+def corrections(reply: str) -> list[str]:
+    """What the assistant took back in this reply, so the corrected version is what later sessions see."""
+    return [m.group(1).strip().rstrip(".") for m in _CORRECTION.finditer(reply or "")][:3]
+
+
+def record_corrections(db: sqlite3.Connection, session: str, reply: str, now: float | None = None) -> list[int]:
+    """Store each correction as a dated fact and supersede the earlier notes it overlaps, so a claim retracted on day 2
+    cannot come back as a fact on day 3."""
+    now = now or time.time()
+    ids = []
+    for c in corrections(reply):
+        words = {w for w in terms(c) if len(w) >= 4}
+        for i, text in db.execute("SELECT id, text FROM items WHERE status='active' AND kind IN ('fact', 'pattern') AND source NOT LIKE 'correction:%'").fetchall():
+            old = {w for w in terms(text) if len(w) >= 4}
+            if old and len(words & old) >= max(2, 0.4 * min(len(words), len(old))):
+                supersede(db, i)
+        ids.append(add(db, "fact", f"correction:{session}", f"Correction ({time.strftime('%Y-%m-%d', time.localtime(now))}, supersedes an earlier note): {c}", now))
+    return ids
 
 
 def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
@@ -212,9 +276,9 @@ def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
     return {"cwd": row[0], "started": row[1], "updated": row[2], **json.loads(row[3])} if row else None
 
 
-def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str | None = None) -> dict | None:
+def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str | None = None, now: float | None = None) -> dict | None:
     """The most recent other session's ledger, preferring one in the same folder, if it ended within within_s."""
-    cut = time.time() - within_s
+    cut = (now or time.time()) - within_s
     for where, args in ((("AND cwd=?", (exclude, cut, cwd)),) if cwd else ()) + (("", (exclude, cut)),):
         row = db.execute(f"SELECT session FROM ledger WHERE session != ? AND updated > ? {where} ORDER BY updated DESC LIMIT 1",
                          args).fetchone()
@@ -228,7 +292,8 @@ def ledger_lines(d: dict) -> list[str]:
     if d.get("reply"):
         out.append(f"- Last reply ended: {d['reply']}")
     if d.get("loops"):
-        out.append("- Open loops from that session (close each or say why it is still open; never repeat one unchanged): " + "; ".join(d["loops"]))
+        out.append("- Left unfinished in that session (do each now, ask again once, or drop it with a reason; never repeat one unchanged "
+                   "and never call it an 'open loop' to the user): " + "; ".join(d["loops"]))
     if d["files"]:
         out.append("- Files edited: " + ", ".join(d["files"]))
     if d["commands"]:

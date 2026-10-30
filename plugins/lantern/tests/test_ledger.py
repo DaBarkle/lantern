@@ -72,6 +72,67 @@ class LedgerTest(unittest.TestCase):
         hooks.run(name, io.StringIO(json.dumps(payload)), out)
         return json.loads(out.getvalue()) if out.getvalue() else None
 
+    def test_an_unchecked_admission_is_sent_back_once(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is plex up?"), assistant("Plex is enabled. I didn't check whether it is actually listening on 32400.")])
+        out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("I didn't check whether it is actually listening on 32400", out["reason"])
+        self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))  # once
+        write(p, [user("is plex up?"), assistant("Plex is listening on 32400 (ss -ltn).")])
+        self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
+
+    def test_a_correction_supersedes_the_note_it_retracts(self):
+        db = memory.connect()
+        old = memory.add(db, "fact", "curate:2026-10-30:1", "podman-auto-update.timer is enabled and runs nightly, so images refresh by themselves")
+        other = memory.add(db, "fact", "curate:2026-10-30:2", "the restic passphrase sits next to the repo it unlocks on Nyx")
+        db.close()
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("what changed?"), assistant("Nothing new.\n\n**Correction:** podman-auto-update.timer isn't enabled; images do not refresh by themselves, that open loop is closed.")])
+        self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
+        db = memory.connect()
+        self.assertEqual(db.execute("SELECT status FROM items WHERE id=?", (old,)).fetchone()[0], "superseded")
+        self.assertEqual(db.execute("SELECT status FROM items WHERE id=?", (other,)).fetchone()[0], "active")
+        facts = memory.rules(db, 4000, kind="fact", dated=True)
+        db.close()
+        self.assertTrue(any("Correction (" in f and "isn't enabled" in f for f in facts), facts)
+        self.assertFalse(any("runs nightly" in f for f in facts))
+        self.assertEqual(memory.corrections("All good. I was wrong earlier: Plex runs as container-plex.service, not plex.service."), ["Plex runs as container-plex.service, not plex.service"])
+
+    def test_hands_off_reply_is_sent_back_to_the_snapshot(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is everything ok with my computer?"), assistant("I couldn't check. Here is what it would have run, so you can approve it or run it yourself: systemctl --failed")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 600}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("within the last two hours", out["reason"])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertNotIn("within the last two hours", out["reason"])  # no fresh snapshot to point at; only the plain "couldn't check" nudge remains
+
+    def test_reader_level_follows_the_users_words(self):
+        with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text("{}")
+            hooks.reader_level("is the plex thing ok? keep it simple")
+            self.assertEqual(hooks.discovery.expertise(), "general")
+            hooks.reader_level("check ~/.config/systemd/user/plex.service")
+            self.assertEqual(hooks.discovery.expertise(), "general")  # a path once does not undo "keep it simple"
+            Path(self.tmp.name, "settings.json").write_text("{}")
+            hooks.reader_level("journalctl --user -u plex.service -n 20 please")
+            self.assertEqual(hooks.discovery.expertise(), "expert")
+
+    def test_newly_discovered_is_said_once(self):
+        from lantern_core import stage
+        db = memory.connect()
+        stage.publish(db, "discovery/new", "discovery", "Found on this machine and remembered: plex, sonarr")
+        db.close()
+        with mock.patch.object(hooks.insights, "run", return_value=[]), mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text("{}")  # not a first session
+            ctx = self.call("session-start", {"session_id": "d2", "source": "startup", "cwd": "/proj"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Found on this machine and remembered: plex, sonarr", ctx)
+            ctx = self.call("session-start", {"session_id": "d3", "source": "startup", "cwd": "/proj"})["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("Found on this machine and remembered", ctx)  # day 3 does not call day 2's finds new again
+
     def test_resume_shows_what_the_last_session_did_in_this_folder(self):
         p = Path(self.tmp.name) / "t.jsonl"
         write(p, [user("add a nightly backup timer"), assistant("ok", ("Edit", {"file_path": "/proj/backup.timer"}), ("Bash", {"command": "systemctl --user daemon-reload"}))])
@@ -88,6 +149,8 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("Last reply ended: enabled. Next: check it fired at 03:00.", ctx)
         self.assertEqual(memory.open_loops("Done.\nI didn't check whether the timer fired.\nNext, I can list the largest folders."),
                          ["I didn't check whether the timer fired", "Next, I can list the largest folders"])
+        self.assertEqual(memory.open_loops("Enabled. Should I also enable it on Nyx? Is the 03:00 slot right for you?\n- I can read the journal next."),
+                         ["Should I also enable it on Nyx?", "Is the 03:00 slot right for you?", "I can read the journal next"])  # questions and offers are loops too
         self.assertIn("/proj/backup.timer", ctx)
         self.assertIn("enable --now backup.timer", ctx)
         ctx = self.call("session-start", {"session_id": "s4", "source": "startup", "cwd": "/third"})["hookSpecificOutput"]["additionalContext"]
@@ -364,11 +427,25 @@ class InsightsTest(unittest.TestCase):
             subprocess.run(["git", "-C", str(dirty), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x"], check=True)
             with mock.patch.object(insights.discovery, "_run", return_value=""):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
-            self.assertIn("1 finding(s) resolved", line)
-            self.assertIn("dirty: now clean (last commit", line)  # a vanished finding is explained, never dropped
+            self.assertIn("1 finding resolved, 0 new, 1 unchanged", line)
+            self.assertNotIn("finding(s)", line)
+            self.assertIn("Resolved: dirty: now clean (last commit", line)  # a vanished finding is explained, never dropped
             self.assertIn("still no remote", line)
             line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
+            self.assertIn("0 findings resolved, 1 new, 1 unchanged", line)
             self.assertIn("New: failed x.service", line)
+            with mock.patch.object(insights.discovery, "_run", return_value=""):
+                line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/backup/x.service"})
+            self.assertIn("0 findings resolved, 0 new, 1 changed, 1 unchanged", line)  # same subject, new kind: changed, not resolved plus new
+            self.assertIn("Changed: x.service: now", line)
+            with mock.patch.object(insights.discovery, "_run", return_value=""):
+                insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
+            with mock.patch.object(insights.discovery, "_run", side_effect=lambda cmd: "failed" if "is-failed" in cmd else ""):
+                line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/y.service"})  # cache says x.service is gone
+            self.assertIn("0 findings resolved, 1 new, 1 back again, 1 unchanged", line)  # but it is failed right now: back, not resolved
+            self.assertIn("Back again", line)
+            self.assertNotIn("checked just now", line)
+            self.assertIn("insight/failed/x.service", insights.discovery.settings()["insights"])  # remembered, so tomorrow it is not "new"
             self.assertTrue(any("dirty (" in m and "has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
             self.assertTrue(any("clean (" in m and "is active but has no git remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
@@ -475,6 +552,13 @@ class HeadlessCaptureTest(unittest.TestCase):
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 hooks.user_prompt_submit({"prompt": "go", "session_id": "s1", "transcript_path": str(p), "cwd": d})
             self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # accumulated
+            # the next session inherits the unfinished items and closes the one its reply addresses
+            write(p, [user("read the journal"), assistant("The plex journal shows a bind failure on port 32400.")])
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                hooks.user_prompt_submit({"prompt": "ok", "session_id": "s2", "transcript_path": str(p), "cwd": d})
+            self.assertEqual(memory.ledger_get(db, "s2")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # one shared word is a mention, not a closure
+            self.assertTrue(memory.addresses("I read the plex journal: a bind failure on port 32400, container-plex holds it.", "I didn't check the plex journal for the bind failure on 32400"))
+            self.assertFalse(memory.addresses("The fix is a localhost bind or a firewall rule on 6006.", "I didn't check whether a firewall already blocks port 6006 from the LAN"))
             db.close()
 
 
@@ -491,6 +575,13 @@ class RuleTouchingTest(unittest.TestCase):
             self.assertIn("Standing rules that touch this request", ctx)
             self.assertIn("never restart Plex", ctx)
             self.assertNotIn("keep replies short", ctx)
+            self.assertNotIn("states its reason", ctx)  # no reason given, nothing to pre-check
+            db = memory.connect()
+            memory.add(db, "rule", "said:s0", "never restart Plex without asking me first, it breaks my parents' stream")
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                ctx = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("run one read-only check of whether that reason holds", ctx)
             db = memory.connect()
             hooks.stage.publish(db, "insight/x", "insight", "plex.container has AutoUpdate=registry: it can restart itself", score=3)
             db.close()
