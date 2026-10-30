@@ -468,6 +468,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       for h in titles]
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
+        lines += ["A rule reaches exactly what it names: one about X says nothing about Y, so if this request is outside the "
+                  "rule's words, say so in one clause and proceed; if inside, honour it."]
         if any(_REASON.search(r) for r in touching):
             lines += ["A rule above states its reason. Before acting on it, run one read-only check of whether that reason holds "
                       "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
