@@ -179,32 +179,67 @@ def rule_items(db: sqlite3.Connection) -> list[tuple[int, str]]:
 LEDGER_KEEP = 20
 
 
+LOOPS_KEEP = 12  # open loops carried per session; the oldest fall off once a session holds more
+RESUME_HOURS = 48
+PROJECT_RESUME_DAYS = 14  # a session in the same folder is worth resuming for longer than one anywhere
+
+
 def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, now: float | None = None) -> dict:
-    """Fold one turn (from transcript.last_turn) into the session's ledger: what it set out to do, what it touched."""
+    """Fold one turn (from transcript.last_turn) into the session's ledger: what it set out to do, what it touched.
+    Open loops are inherited from the previous session and kept until a reply addresses them, so a question asked
+    on day 1 is still open on day 3 unless it was answered."""
     now = now or time.time()
     row = db.execute("SELECT data, started FROM ledger WHERE session=?", (session,)).fetchone()
-    d = json.loads(row[0]) if row else {"goal": turn["user"][:400], "files": [], "commands": [], "agents": [], "failed": 0, "turns": 0}
+    if row:
+        d = json.loads(row[0])
+    else:
+        prior = previous_session(db, session, cwd, now)
+        d = {"goal": turn["user"][:400], "files": [], "commands": [], "agents": [], "failed": 0, "turns": 0,
+             "loops": list(prior.get("loops", [])) if prior else []}
     for k in ("files", "commands", "agents"):
         d[k] = list(dict.fromkeys(d[k] + turn.get(k, [])))[-LEDGER_KEEP:]
     d["failed"] += turn.get("failed", 0)
     d["turns"] += 1
     d["last"] = turn["user"][:400]
     d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
-    d["loops"] = list(dict.fromkeys(d.get("loops", []) + open_loops(turn.get("reply", ""))))[-8:]  # across the session
+    kept = [l for l in d.get("loops", []) if not addresses(turn.get("reply", ""), l)]  # done, re-asked or retired
+    d["loops"] = list(dict.fromkeys(kept + open_loops(turn.get("reply", ""))))[-LOOPS_KEEP:]
     with db:
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
     return d
 
 
-_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
-                   r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{6,220})")
+_SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or version does not end it
+_LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))(?:((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
+                   r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
+                   r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Say the word)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
 
 
-def open_loops(reply: str, limit: int = 5) -> list[str]:
-    """Promises and gaps the assistant stated in its reply ("I didn't check X", "Next, I can Y"), so the next session
-    closes or re-asks them instead of repeating them."""
-    return [m.group(1).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+def open_loops(reply: str, limit: int = 8) -> list[str]:
+    """Promises, gaps, offers and questions the assistant stated in its reply ("I didn't check X", "Next, I can Y",
+    "Should I Z?"), so the next session closes or re-asks them instead of repeating them."""
+    return [(m.group(1) or m.group(2)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+
+
+def addresses(reply: str, loop: str) -> bool:
+    """A reply addresses a loop when it reuses the loop's distinctive words: the thing was done, re-asked or retired."""
+    have = set(terms(reply))
+    distinctive = {w for w in terms(loop) if len(w) >= 6 or any(c in w for c in "./-0123456789")}  # a path, unit, name or long word
+    if distinctive:
+        return bool(distinctive & have)
+    plain = {w for w in terms(loop) if len(w) >= 4}
+    return bool(plain) and len(plain & have) >= min(2, len(plain))  # shortcut: no stemming, "enable" and "enabled" differ; stem if loops linger
+
+
+def previous_session(db: sqlite3.Connection, session: str, cwd: str, now: float | None = None) -> dict | None:
+    """The session to resume from: the last one in this folder within two weeks, else the last one anywhere within two
+    days."""
+    now = now or time.time()
+    prior = ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd, now=now) if cwd else None
+    if prior and prior["cwd"] != cwd and now - prior["updated"] > RESUME_HOURS * 3600:
+        prior = None  # another folder's session only counts while it is fresh
+    return prior or ledger_last(db, session, RESUME_HOURS * 3600, now=now)
 
 
 def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
@@ -212,9 +247,9 @@ def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
     return {"cwd": row[0], "started": row[1], "updated": row[2], **json.loads(row[3])} if row else None
 
 
-def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str | None = None) -> dict | None:
+def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str | None = None, now: float | None = None) -> dict | None:
     """The most recent other session's ledger, preferring one in the same folder, if it ended within within_s."""
-    cut = time.time() - within_s
+    cut = (now or time.time()) - within_s
     for where, args in ((("AND cwd=?", (exclude, cut, cwd)),) if cwd else ()) + (("", (exclude, cut)),):
         row = db.execute(f"SELECT session FROM ledger WHERE session != ? AND updated > ? {where} ORDER BY updated DESC LIMIT 1",
                          args).fetchone()

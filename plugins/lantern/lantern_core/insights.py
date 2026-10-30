@@ -182,24 +182,47 @@ def discovered_since_last(db) -> str:
     return ""
 
 
+def _subject(key: str) -> str:
+    """The thing a finding is about (a repo path, a unit, a volume), without its kind."""
+    return key.removeprefix("insight/").partition("/")[2]
+
+
+def _name(key: str) -> str:
+    return key.removeprefix("insight/").replace("/", " ", 1).replace(str(Path.home()), "~")
+
+
 def diff_since_last(found_keys: set[str], db=None) -> str:
-    """How the findings moved since the last session, with what each resolved one looks like now; remembers them."""
+    """How the findings moved since the last session, with what each resolved one looks like now; remembers them.
+    Findings are matched by subject, so a repo that was committed but still has no remote is CHANGED, never one
+    resolved plus one new; the counts and the lists come from the same sets."""
     s = discovery.settings()
     before = set(s.get("insights", []))
     s["insights"] = sorted(found_keys)
     discovery.save_settings(s)
     if not before:
         return ""
-    resolved, new = before - found_keys, found_keys - before
-    line = (f"Since the last session: {len(resolved)} finding(s) resolved, {len(new)} new, "
-            f"{len(found_keys & before)} unchanged (all checked just now).")
+    old: dict[str, set[str]] = {}
+    cur: dict[str, set[str]] = {}
+    for k in before:
+        old.setdefault(_subject(k), set()).add(k)
+    for k in found_keys:
+        cur.setdefault(_subject(k), set()).add(k)
+    resolved = sorted(k for subj in old.keys() - cur.keys() for k in old[subj])
+    new = sorted(k for subj in cur.keys() - old.keys() for k in cur[subj])
+    changed = sorted(k for subj in old.keys() & cur.keys() if old[subj] != cur[subj] for k in old[subj])
+    unchanged = len(old.keys() & cur.keys()) - len(changed)
+    plural = lambda n, word: f"{n} {word}{'' if n == 1 else 's'}"
+    counts = [f"{plural(len(resolved), 'finding')} resolved", f"{len(new)} new"]
+    if changed:
+        counts.append(f"{len(changed)} changed")
+    counts.append(f"{unchanged} unchanged")
+    line = "Since the last session: " + ", ".join(counts) + " (all checked just now)."
     if new:
-        line += " New: " + "; ".join(k.removeprefix("insight/").replace("/", " ", 1).replace(str(Path.home()), "~") for k in sorted(new)[:6]) + "."
-    found = discovered_since_last(db) if db is not None else ""
-    if found:
-        line += " " + found.rstrip(".") + " (newly discovered on this machine, say so)."
+        line += " New: " + "; ".join(_name(k) for k in new[:6]) + "."
+    if changed:
+        line += " Changed: " + "; ".join(_why_resolved(k) for k in changed[:6]) + "."
     if resolved:
-        line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
+        line += " Resolved: " + "; ".join(_why_resolved(k) for k in resolved[:6]) + "."
     return line
 
 

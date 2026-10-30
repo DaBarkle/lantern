@@ -22,8 +22,7 @@ RULES_CHARS = 12000
 INDEX_CHARS = 20000  # one short line per curated note, so a session knows what memory holds before it asks
 TOP_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
-RESUME_HOURS = 48
-PROJECT_RESUME_DAYS = 14  # a session in the same folder is worth showing for longer than one anywhere
+RESUME_HOURS = memory.RESUME_HOURS
 AGENT_CHARS = 1500
 SHORT_PROMPT_TERMS = 8  # below this, the session's own names join the recall query
 # A correction holds from the moment it is said, not from tomorrow's curation.
@@ -193,11 +192,7 @@ def session_start(payload: dict) -> dict | None:
         patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern", dated=True)
         session = payload.get("session_id", "?")
         cwd = payload.get("cwd") or ""
-        previous = memory.ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd) if cwd else None
-        if previous and previous["cwd"] != cwd and time.time() - previous["updated"] > RESUME_HOURS * 3600:
-            previous = None  # another folder's session only counts while it is fresh
-        if not previous:
-            previous = memory.ledger_last(db, session, RESUME_HOURS * 3600)
+        previous = memory.previous_session(db, session, cwd)
         tail = memory.last_session(db, session, RESUME_HOURS * 3600)
         learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
         no_rules = not memory.rules(db, 2000)
@@ -205,6 +200,8 @@ def session_start(payload: dict) -> dict | None:
         watches = insights.watch_summary(db)
         open_block = insights.open_block(db)
         found_new = insights.discovered_since_last(db)
+        if found_new and payload.get("source") not in ("compact", "resume"):
+            stage.resolve(db, "discovery/new")  # said as new once; the next session must not call it new again
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
