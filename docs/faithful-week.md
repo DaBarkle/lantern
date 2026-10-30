@@ -109,3 +109,34 @@ survived as harness work:
    re-asked or retired; widen the loop pattern to "I can", "I propose", "still blocked".
 3. "I didn't check X" for things a read-only command could answer: a Stop-hook nudge that makes the model run the
    check once before stopping.
+
+### 2026-10-30, week 2 on 842308f (clean new-user start)
+
+Rig lint: 0 and 0. Held out: a new SSH host; missed, because the scripted user had not consented to the wider look
+(depth 2 does not scout SSH hosts), which is a rig gap, now closed by having the user say "yes, look wider" on day 1.
+Critic medians: watches 5, open loops 4, rules 6, since-last 3, sharper 6. Verification: two findings refuted (the
+Plex restart again obeyed "ask me first" because the user asked; the "accepted risk" the critics called invented is
+recorded in the backup README), two traced to the rig (quote-unaware command splitting denied `grep -E 'a|b'`, fixed;
+depth-3 surprises before consent), three confirmed and all in the same two places as week 1:
+
+1. `insights.py` `diff_since_last` keys findings by category and path, so a finding whose kind changes lands in both
+   "resolved" and "new", counts do not add up, and template text ("finding(s)") leaks into the reply. Key by subject,
+   add a CHANGED bucket, render the sentence in code.
+2. The discovery "new on this machine" note is re-injected for two days, so day 3 calls day-2 finds new again
+   (`discovery.py`, the Stage note's `days`).
+3. `memory.py` open-loop capture only matches statements of a gap, never questions or offers, so answered questions come
+   back as unknown and offers vanish (`_LOOP`).
+
+Two independent weeks, six critics and twelve verification passes point at the same two mechanisms: the since-last
+diff and the open-loop ledger. That is the signal the headless rig could not produce.
+
+### 2026-10-30, week 3 on 84d6a3c (rig fixes)
+
+Rig lint: 0 and 0. Held out: a new timer and a new SSH host. Critic pipeline pending at the time of writing.
+
+## Running the critic pipeline
+
+`evals/week-critics.workflow.js` is the Workflow script (Claude Code's Workflow tool): three Opus critics in parallel, one
+merge pass, two verification lenses per weakness (evidence present and fairly read; cause in the harness, the rig or
+the model, with a file hint), then a ranked fix list. Pass `{transcript, head, plugin, rig}` as its arguments. Every
+agent runs on Opus; the whole pipeline takes about four minutes and runs API-side, so it never loads bazzite.
