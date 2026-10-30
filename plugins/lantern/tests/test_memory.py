@@ -167,6 +167,18 @@ class WorkingMemoryTest(unittest.TestCase):
             self.assertIn("last session left off", fresh)
 
 
+class RecallRecencyTest(unittest.TestCase):
+    def test_newer_state_outranks_old_on_the_same_topic(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            old = memory.add(db, "turn", "s1", "User: is paperclip up?\nAssistant: Paperclip bridge is running on port 3100 and healthy today.", created=time.time() - 120 * DAY)
+            new = memory.add(db, "turn", "s2", "User: paperclip status\nAssistant: Paperclip was shut down on purpose; the bridge is off.", created=time.time() - 2 * DAY)
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=[(old, 0.9), (new, 0.85)]):
+                ctx = hooks.user_prompt_submit({"prompt": "is paperclip running?", "session_id": "x"})["hookSpecificOutput"]["additionalContext"]
+            self.assertLess(ctx.index("shut down on purpose"), ctx.index("running on port 3100"))
+
+
 class RecallTitlesTest(unittest.TestCase):
     def test_extra_matches_come_as_titles(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):

@@ -145,8 +145,16 @@ def user_prompt_submit(payload: dict) -> dict | None:
         attention = stage.delta(db, payload.get("session_id", "?"))
     finally:
         db.close()
-    # This session's turns are already in context.
-    order = sorted(fused, key=lambda i: fused[i] * KIND_WEIGHT.get(rows.get(i, {}).get("kind"), 1.0), reverse=True)
+    # This session's turns are already in context. Newer items on the same topic outrank older ones (stale state was
+    # the main source of wrong statements about the user's systems), with the same gentle half-life as keyword search.
+    now = time.time()
+
+    def rank(i: int) -> float:
+        row = rows.get(i, {})
+        age = max(0.0, (now - row.get("created", now)) / 86400)
+        return fused[i] * KIND_WEIGHT.get(row.get("kind"), 1.0) * (0.5 + 0.5 * math.exp(-age * math.log(2) / memory.HALF_LIFE_DAYS))
+
+    order = sorted(fused, key=rank, reverse=True)
     hits, seen = [], set()
     for i in order:
         h = rows.get(i)
