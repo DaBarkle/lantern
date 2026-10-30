@@ -37,6 +37,15 @@ def _post(url: str, body: dict) -> None:
     urllib.request.urlopen(req, timeout=15).read()
 
 
+def _confirm(cfg: dict, approved: bool, question: str) -> None:
+    """The tap itself shows nothing on the phone, so say that it landed."""
+    try:
+        _post(cfg["server"], {"topic": cfg["topic"], "title": "Approved" if approved else "Denied", "priority": 2,
+                              "message": question[:200], "tags": ["white_check_mark" if approved else "x"]})
+    except OSError:
+        pass  # the decision stands; the confirmation is a courtesy
+
+
 def _replies(cfg: dict, since: int) -> list[str]:
     topic = urllib.parse.quote(cfg["topic"] + "-reply")
     with urllib.request.urlopen(f"{cfg['server']}/{topic}/json?poll=1&since={since}", timeout=15) as r:
@@ -60,10 +69,9 @@ def ask(question: str, timeout: float = 600, cfg: dict | None = None) -> int:
             time.sleep(min(RETRY_SECONDS, max(0.0, deadline - time.time())))
             continue
         for msg in replies:
-            if msg == f"approve {nonce}":
-                return APPROVED
-            if msg == f"deny {nonce}":
-                return DENIED
+            if msg in (f"approve {nonce}", f"deny {nonce}"):
+                _confirm(cfg, msg.startswith("approve"), question)
+                return APPROVED if msg.startswith("approve") else DENIED
         time.sleep(POLL_SECONDS)
     return TIMED_OUT
 

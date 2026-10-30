@@ -152,6 +152,7 @@ class ApprovalsTest(unittest.TestCase):
         self.rate_limits.extend([1, 1])
         with mock.patch.object(approvals, "RETRY_SECONDS", 0.05):
             self.assertEqual(self.run_ask("Approve"), approvals.APPROVED)
+        self.assertEqual(self.posts[-1]["title"], "Approved")  # the phone is told the tap landed
         self.posts.clear()
         self.replies.clear()
         self.assertEqual(self.run_ask("Deny"), approvals.DENIED)
