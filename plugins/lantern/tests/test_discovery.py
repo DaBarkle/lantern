@@ -50,6 +50,6 @@ class DiscoveryTest(unittest.TestCase):
         db.close()
 
     def test_depth_setting_persists(self):
-        self.assertEqual(discovery.settings()["depth"], 1)
+        self.assertEqual(discovery.settings()["depth"], 2)  # workspace by default
         discovery.cli(["depth", "3"])
         self.assertEqual(discovery.settings()["depth"], 3)

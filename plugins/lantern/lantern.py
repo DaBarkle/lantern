@@ -20,7 +20,7 @@ USAGE = """usage: lantern.py hook <name>
        lantern.py remember <text> | forget <query> | forget --id N | recall <query> | profile
        lantern.py approve setup | "<question>" [--timeout SECONDS]
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
-       lantern.py job curate | doctor          (what the nightly schedule runs)
+       lantern.py job curate | doctor | discover         (what the nightly schedule runs)
        lantern.py schedule [--apply]           (show, or install, the nightly jobs)"""
 
 
@@ -94,6 +94,11 @@ def main(argv: list[str]) -> int:
         from lantern_core import jobs
         print(f"curated {curate.run()} new rules and facts")
         jobs.mark("curate", "done")
+        return 0
+    if argv == ["job", "discover"]:
+        from lantern_core import jobs
+        print(f"discovered {len(discovery.auto())} new capabilities")
+        jobs.mark("discover", "done")
         return 0
     if argv == ["job", "doctor"]:
         from lantern_core import jobs

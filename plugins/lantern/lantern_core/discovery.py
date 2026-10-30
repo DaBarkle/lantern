@@ -3,7 +3,7 @@ until the user accepts it; an accepted find becomes a capability card in memory 
 
 Depth (a consent boundary, `lantern depth N`):
   1 conversations  memory of sessions only, no scouts
-  2 workspace      git repos and dev tools
+  2 workspace      git repos and dev tools (the default)
   3 home           containers, services, SSH hosts, well-known local service ports
   4 life           accounts the user connects on purpose (Claude connectors; nothing to scout locally)
 """
@@ -24,7 +24,7 @@ PORTS = {32400: "Plex", 8123: "Home Assistant", 8443: "UniFi Network", 3001: "Up
          8181: "Tautulli", 8265: "Tdarr", 9000: "Portainer", 1883: "MQTT broker"}
 SKIP_DIRS = {"node_modules", ".cache", ".local", ".var", "Library", "AppData", ".cargo", ".rustup", "go", ".npm"}
 TIMEOUT = 10
-DEPTHS = {1: "conversations: memory of sessions only, no scouts", 2: "workspace: git repos and dev tools",
+DEPTHS = {1: "conversations: memory of sessions only, no scouts", 2: "workspace (default): git repos and dev tools",
           3: "home: containers, services, SSH hosts, well-known local service ports",
           4: "life: also accounts you connect on purpose through Claude connectors"}
 
@@ -37,7 +37,7 @@ def settings() -> dict:
     try:
         return json.loads(settings_path().read_text())
     except (OSError, ValueError):
-        return {"depth": 1}
+        return {"depth": 2}  # workspace by default: repos and dev tools are harmless to know and make Lantern useful at once
 
 
 def save_settings(s: dict) -> None:
@@ -191,6 +191,35 @@ def healthy(check: dict) -> bool | None:
     return None
 
 
+PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "lantern-tailscale", "Home Assistant": "lantern-home-assistant",
+         "Plex": "lantern-media-server", "Jellyfin": "lantern-media-server", "Sonarr": "lantern-media-server", "Radarr": "lantern-media-server",
+         "UniFi Network": "lantern-unifi"}
+
+
+def auto(now: float | None = None) -> list[dict]:
+    """Daily: scout within the depth the user chose, remember what is new, and say so on Stage (once). The depth is
+    the consent boundary; within it nothing needs accepting by hand."""
+    from . import memory, stage
+    s = settings()
+    known = s.get("capabilities", {})
+    finds = [f for f in discover(s.get("depth", 2)) if f["id"] not in known]
+    if not finds:
+        return []
+    accept(finds)
+    packs = sorted({PACKS[f["name"]] for f in finds if f["name"] in PACKS})
+    msg = "Found on this machine and remembered: " + ", ".join(f["name"] for f in finds[:12])
+    if len(finds) > 12:
+        msg += f" and {len(finds) - 12} more"
+    if packs:
+        msg += ". Packs that add skills for these: " + ", ".join(packs) + " (claude plugin install <pack>@lantern)"
+    db = memory.connect()
+    try:
+        stage.publish(db, "discovery/new", "discovery", msg, score=3, days=2, now=now)
+    finally:
+        db.close()
+    return finds
+
+
 def cli(argv: list[str]) -> int:
     """lantern discover [--accept all|1,2,...]   lantern depth [1-4]"""
     s = settings()
@@ -200,7 +229,7 @@ def cli(argv: list[str]) -> int:
             save_settings(s)
         print(f"depth {s['depth']}, {DEPTHS[s['depth']]}")
         return 0
-    depth = s.get("depth", 1)
+    depth = s.get("depth", 2)
     if depth < 2:
         print("Depth is 1 (conversations only), so there is nothing to scout. Raise it with `lantern depth 2` or `3`.")
         return 0

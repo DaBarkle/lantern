@@ -175,17 +175,17 @@ class JobsTest(unittest.TestCase):
         from lantern_core import jobs
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
                 mock.patch.object(jobs.curate, "available", return_value=True):
-            self.assertEqual(jobs.due(), ["curate", "doctor"])
+            self.assertEqual(jobs.due(), ["curate", "doctor", "discover"])
             spawned = []
             with mock.patch.object(jobs.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
                 hooks.session_start({"session_id": "s1", "source": "startup"})
                 hooks.session_start({"session_id": "s2", "source": "startup"})  # already started: not again
-            self.assertEqual([c[-3] for c in spawned], ["curate", "doctor"])
+            self.assertEqual([c[-3] for c in spawned], ["curate", "doctor", "discover"])
             self.assertIn("--data", spawned[0])
-            jobs.mark("curate", "done")
-            jobs.mark("doctor", "done")
+            for j in ("curate", "doctor", "discover"):
+                jobs.mark(j, "done")
             self.assertEqual(jobs.due(), [])
-            self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor"])
+            self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor", "discover"])
 
 
 class DoctorRepairTest(unittest.TestCase):
@@ -198,3 +198,21 @@ class DoctorRepairTest(unittest.TestCase):
             self.assertEqual(status, doctor.OK)
             self.assertIn("started", msg)
             self.assertTrue(spawned[0][-1].endswith("serve.py"))
+
+
+class AutoDiscoveryTest(unittest.TestCase):
+    def test_new_finds_within_depth_are_remembered_and_announced_once(self):
+        from lantern_core import discovery, stage
+        find = {"id": "tool:docker", "kind": "tool", "name": "docker", "detail": "/usr/bin/docker", "check": {"type": "tool", "name": "docker"}}
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(discovery, "discover", return_value=[find]):
+            self.assertEqual(len(discovery.auto()), 1)
+            self.assertEqual(discovery.auto(), [])  # known now
+            db = memory.connect()
+            top = stage.top(db)
+            self.assertIn("docker", top[0]["message"])
+            self.assertIn("lantern-docker", top[0]["message"])
+            self.assertTrue(memory.search(db, "docker capability"))
+            db.close()
+            ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("docker", ctx)
