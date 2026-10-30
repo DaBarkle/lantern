@@ -144,7 +144,8 @@ def check_hook_latency():
         lines = (ensure_data_dir() / "hooks.jsonl").read_text().splitlines()[-200:]
     except OSError:
         return OK, "hook latency: nothing measured yet"
-    ms = sorted(json.loads(l)["ms"] for l in lines if l.strip())
+    entries = [json.loads(l) for l in lines if l.strip()]
+    ms = sorted(e["ms"] for e in entries if e.get("hook") != "stop")  # Stop runs async (it waits for the reply text); never on the prompt path
     if len(ms) < 20:
         return OK, f"hook latency: too few calls yet ({len(ms)})"
     p90 = ms[int(len(ms) * 0.9) - 1]

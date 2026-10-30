@@ -433,6 +433,16 @@ class JobsTest(unittest.TestCase):
             self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor", "discover"])
 
 
+class HookLatencyTest(unittest.TestCase):
+    def test_async_stop_hook_is_not_in_the_latency_budget(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            rows = [{"hook": "user-prompt-submit", "ms": 40}] * 25 + [{"hook": "stop", "ms": 1600}] * 25
+            (Path(d) / "hooks.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            status, msg = doctor.check_hook_latency()
+            self.assertEqual(status, doctor.OK, msg)
+            self.assertIn("40 ms", msg)
+
+
 class DoctorRepairTest(unittest.TestCase):
     def test_memory_server_down_is_started_not_reported(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
