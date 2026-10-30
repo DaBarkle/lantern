@@ -49,7 +49,7 @@ def messages(path: str | Path) -> list[tuple[str, str]]:
 
 def last_turn(path: str | Path) -> dict:
     """The last user message, the assistant text after it, and what tools did meanwhile:
-    {"user", "reply", "files", "commands", "agents", "failed"}."""
+    {"user", "reply", "last", "files", "commands", "agents", "failed"}."""
     turn = {"user": "", "reply": [], "files": [], "commands": [], "agents": [], "failed": 0}
     for e in _entries(path):
         content = e.get("message", {}).get("content")
@@ -72,6 +72,7 @@ def last_turn(path: str | Path) -> dict:
                 turn["commands"].append(inp["command"].strip().splitlines()[0][:160])
             elif name == "Agent" and inp.get("description"):
                 turn["agents"].append(inp["description"][:120])
+    turn["last"] = turn["reply"][-1] if turn["reply"] else ""  # the text after a Stop-hook retry, on its own
     turn["reply"] = "\n".join(turn["reply"])
     for k in ("files", "commands", "agents"):
         turn[k] = list(dict.fromkeys(turn[k]))  # each once, in order

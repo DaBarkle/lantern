@@ -637,3 +637,113 @@ class LastSessionCaptureTest(unittest.TestCase):
             db = memory.connect()
             self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn' AND source='old-session'").fetchone()[0], 1)
             db.close()
+
+
+WEEK6_REPLY = """I couldn't check. The health check was blocked as if it would change the machine, but every command in it only reads. Nothing was restarted or modified. Here is what it would have run, so you can approve it or run it yourself:
+
+- `uptime` and `free -h`: system load and memory.
+- `df -h`: whether any disk is running low.
+- `systemctl --failed` and `systemctl --user --failed`: system and user services that have failed.
+
+If you approve it, I'll run it as one read-only check.
+
+I don't know the state of your machine right now."""
+
+
+class HandsOffTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": self.tmp.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def call(self, name, payload):
+        out = io.StringIO()
+        hooks.run(name, io.StringIO(json.dumps(payload)), out)
+        return json.loads(out.getvalue()) if out.getvalue() else None
+
+    def test_hands_off_is_recognised_by_shape_not_only_by_phrase(self):
+        self.assertTrue(hooks.hands_off(WEEK6_REPLY))
+        # no stock phrase at all: an admission plus a list of commands is still hands-off
+        self.assertTrue(hooks.hands_off("That check was declined.\n\n- `systemctl --failed`\n- `df -h`\n\nIf you approve it, I'll run it."))
+        self.assertTrue(hooks.hands_off("Paste me the output of `df -h` and I'll take it from there."))
+        # honest hedges with an answer are not hands-off
+        self.assertFalse(hooks.hands_off("Plex looks healthy: up 28 hours, answers locally (HTTP 200). It's a guess, because I couldn't read Plex's own error log."))
+        # a declined change the user asked for is theirs to approve; handing that command over is not hands-off looking
+        self.assertFalse(hooks.hands_off("Plex has not been restarted; the restart was declined.\n\n```\nsystemctl --user restart container-plex.service\n```\n\nAllow it when the prompt appears (or run it yourself)."))
+        self.assertFalse(hooks.hands_off("All fine. I ran `systemctl --failed` (nothing) and `df -h` (41% used).\n\n- `lantern-curate.timer`: next 03:00\n- `lantern-doctor.timer`: next 04:00"))
+
+    def test_after_one_failed_retry_the_hook_itself_states_the_snapshot(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        db = memory.connect()
+        hooks.stage.publish(db, "insight/failed/x.service", "insight", "x.service has failed", score=5)
+        db.close()
+        settings = {"insights_at": time.time() - 600}
+        with mock.patch.object(hooks.discovery, "settings", return_value=settings), mock.patch.object(hooks.discovery, "save_settings"):
+            write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY)])
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("found: 1 failed; failed: x.service", out["reason"])  # the snapshot's words are in the nudge itself
+            # the retry still hands off: the hook adds the answer rather than nudging again
+            write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY), assistant("Sorry, I still couldn't check. You could run `systemctl --failed` and `df -h` yourself.")])
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True})
+            self.assertNotIn("decision", out)
+            self.assertIn("failed: x.service", out["systemMessage"])
+            # a retry that answers is left alone, even though the first half of the turn was hands-off
+            write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY), assistant("One thing is wrong: x.service has failed. Disk and the rest are fine.")])
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))
+
+    def test_a_health_question_is_handed_the_snapshot_as_its_answer(self):
+        db = memory.connect()
+        hooks.stage.publish(db, "insight/failed/x.service", "insight", "x.service has failed", score=5)
+        db.close()
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 600}), mock.patch.object(hooks.discovery, "save_settings"):
+            r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "is everything ok with my computer?", "transcript_path": ""})
+            ctx = r["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("You already know the answer to this", ctx)
+            self.assertIn("failed: x.service", ctx)
+            self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "rename the backup timer", "transcript_path": ""}))
+        with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}), mock.patch.object(hooks.discovery, "save_settings"):
+            self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "is everything ok with my computer?", "transcript_path": ""}))  # stale: no claim
+
+
+class LiveChecksTest(unittest.TestCase):
+    def test_failed_units_and_timers_are_checked_live_while_the_slow_scan_is_cached(self):
+        from lantern_core import discovery, stage
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            discovery.accept([{"id": "repo:/r", "kind": "repo", "name": "r", "detail": "", "check": {"type": "path", "path": d}}])
+            db = memory.connect()
+            stage.publish(db, "insight/repo-risk//r", "insight", "r has 2 uncommitted change(s)", score=5)  # the hourly scan's result
+            discovery.save_settings({**discovery.settings(), "insights_at": time.time() - 300, "insights": ["insight/repo-risk//r", "insight/failed/x.service"]})
+
+            def run(cmd):
+                if "--failed" in cmd and "--user" in cmd:
+                    return "x.service loaded failed failed\n"
+                if "list-timers" in cmd:
+                    return "Sat 2026-11-01 03:00:00 GMT 8h left - - new-job.timer new-job.service\n"
+                return ""
+            with mock.patch.object(insights.discovery, "_run", side_effect=run), mock.patch.object(insights, "disk", return_value=[]), \
+                    mock.patch.object(insights, "repos", side_effect=AssertionError("the slow scan must stay cached")):
+                msgs = insights.real_run(db)
+                self.assertTrue(any("x.service has failed" in m for m in msgs), msgs)  # live, not from the hour-old cache
+                self.assertTrue(any("r has 2 uncommitted" in m for m in msgs), msgs)  # cached
+                self.assertFalse(any("new-job.timer" in m for m in msgs))  # the first look at timers only learns them
+                line = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"}, db)
+                self.assertIn("0 findings resolved, 0 new, 2 unchanged", line)  # the flap week's "Resolved: x: now failed" cannot happen
+                self.assertNotIn("Resolved", line)
+
+            def run2(cmd):
+                if "list-timers" in cmd:
+                    return ("Sat 2026-11-01 03:00:00 GMT 8h left - - new-job.timer new-job.service\n"
+                            "Sun 2026-11-02 04:00:00 GMT 1 day left - - other.timer other.service\n")
+                return ""
+            with mock.patch.object(insights.discovery, "_run", side_effect=run2), mock.patch.object(insights, "disk", return_value=[]), \
+                    mock.patch.object(insights, "repos", return_value=[]):
+                msgs = insights.real_run(db)
+            self.assertTrue(any("new scheduled job appeared: other.timer (next run Sun 2026-11-02 04:00:00)" in m for m in msgs), msgs)
+            self.assertFalse(any("x.service" in m for m in msgs))  # cleared since: gone from the live set
+            self.assertEqual(discovery.settings()["timers_seen"], ["new-job.timer", "other.timer"])
+            db.close()
