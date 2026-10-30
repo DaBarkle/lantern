@@ -215,6 +215,7 @@ def session_start(payload: dict) -> dict | None:
         own_ledger = memory.ledger_get(db, session) if own else None
         git_state(db, cwd)
         new_big_files(db, cwd)
+        bigfiles = [e["message"] for e in stage.top(db, k=200) if e["key"].startswith("bigfile/")]
         attention = stage.delta(db, payload.get("session_id", "?"))  # marks it seen, so prompt 1 doesn't repeat it
     finally:
         db.close()
@@ -280,6 +281,8 @@ def session_start(payload: dict) -> dict | None:
     tail_block = []
     if moved:
         tail_block += [moved]
+    if bigfiles:
+        tail_block += ["New large files near the user's work (name each in the reply and say what it is before anyone deletes it): " + "; ".join(bigfiles)]
     if found_new:
         tail_block += [found_new]
     tail_block += [open_block]
@@ -294,7 +297,7 @@ def session_start(payload: dict) -> dict | None:
         tail_block += [f"Phone alerts: {alerts.status()}. Change it with `alerts on|off` or `alerts kinds ...` after a structured "
                        "question, never by editing a file."]
         pending = discovery.settings().get("pending") or []
-        if discovery.settings().get("answered_at") and not pending:
+        if discovery.settings().get("answered_at") and "purpose" not in pending:  # "wider" still pending is not a profile gap
             tail_block += ["The setup questions were answered (guardrails and profile above are in force)."]
         elif discovery.settings().get("answered_at"):
             tail_block += ["The guardrails were accepted; what this machine is for was never confirmed: state your reading of it in one "
@@ -639,6 +642,7 @@ _NO_STATE = re.compile(r"\bI (?:don't|do not) know (?:the state|whether|if|how)\
 _CMD_LINE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+`[^`]{2,}`", re.M)
 _OFFERED_READ = re.compile(r"\b(?:Should I|Shall I|Want me to|Do you want me to|Say the word and I'll) (?:run|check|read|look|inspect|verify|scan|list|pull)\b"
                            r"(?![^?\n]*\b(?:restart|stop|kill|delete|remove|prune|push|install|change|edit|write|enable|disable)\b)[^?\n]{0,140}\?", re.I)
+_JARGON = re.compile(r"`[^`\n]*(?:\s-{1,2}[A-Za-z]|\s/[a-z]\b|\$\w)[^`\n]*`|\bcode=exited\b|\bstatus=\d+/|\b\w+\[\d+\]: |\bexit (?:code|status) \d+\b")
 SNAPSHOT_FRESH_S = 2 * 3600
 HEALTH_ASK = re.compile(r"\b(?:everything|all|things|anything) (?:ok|okay|fine|good|alright|wrong|broken)\b|\bhow(?:'s| is) (?:my|the) "
                         r"(?:machine|computer|system|server|pc|box)\b|\b(?:machine|computer|system|server|pc) (?:ok|okay|fine|healthy|alright)\b"
@@ -690,6 +694,10 @@ def stop_nudge(payload: dict) -> dict | None:
                 "two hours, so you already know the state of this machine: " + snapshot_line(at) + " Add a short follow-up that "
                 "answers from this in plain words: what is failing, what is fine, what changed. No commands for the user to run, "
                 "no 'I couldn't check', no 'I don't know the state'. Never quote or paraphrase this note; the user sees only your words."}
+    if discovery.settings().get("expertise") == "general" and (jargon := _JARGON.search(turn["reply"])):
+        return {"decision": "block", "reason": "This reader asked for plain words, and the reply carries jargon: \"" + jargon.group(0).strip()[:80] + "\". "
+                "Add two or three plain sentences saying what that means for them and what happens next, with no commands, flags, "
+                "exit codes or raw log lines; an exact detail may stay as one short line at the very end, marked 'details'."}
     offered = _OFFERED_READ.search(turn["reply"])
     if offered:
         return {"decision": "block", "reason": "Your reply offers a read-only check instead of doing it: \"" + offered.group(0).strip() + "\". "

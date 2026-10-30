@@ -209,6 +209,25 @@ class LedgerTest(unittest.TestCase):
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a change is asked about, rightly
 
+    def test_jargon_is_sent_back_for_a_plain_reader(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is my computer ok?"), assistant("Kase failed: `systemctl --user reset-failed app-io.github.dabarkle.Kase@autostart.service` clears it (status=137/n/a).")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "general"}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertIn("plain words", out["reason"])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "expert"}):
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # an expert asked for exactly this
+        write(p, [user("is my computer ok?"), assistant("All fine. One app, Kase, stopped during an update and will start again next time you log in.")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "general"}):
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
+
+    def test_only_a_pending_purpose_reasks_the_profile(self):
+        with mock.patch.object(hooks.insights, "run", return_value=[]), mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text(json.dumps({"answered_at": 1.0, "pending": ["wider"]}))
+            ctx = self.call("session-start", {"session_id": "d3", "source": "startup", "cwd": "/proj"})["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("was never confirmed", ctx)
+        self.assertIn("The setup questions were answered", ctx)
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
