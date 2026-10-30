@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lantern_core import discovery, doctor, insights, jobs, survey  # noqa: E402
+import tempfile
+
+from lantern_core import discovery, doctor, insights, jobs, paths, survey  # noqa: E402
+
+_POINTER = Path(tempfile.mkdtemp()) / "data-dir"  # tests must never rewrite the user's own data-dir pointer
+mock.patch.object(paths, "_pointer", lambda: _POINTER).start()
 
 jobs.real_start = jobs.start
 mock.patch.object(jobs, "start", lambda *a, **k: []).start()

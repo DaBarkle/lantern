@@ -31,7 +31,7 @@ class PathsTest(unittest.TestCase):
 class PointerTest(unittest.TestCase):
     def test_shell_commands_find_the_sessions_data_folder(self):
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(paths, "_os_default", return_value=Path(d) / "default"):
+            with mock.patch.object(paths, "_pointer", return_value=Path(d) / "default" / "data-dir"):
                 with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/plugin-data"}):
                     self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a hook, inside Claude Code
                 env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME")}
