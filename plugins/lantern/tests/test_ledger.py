@@ -174,12 +174,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def _real_start(*a, **k):
-    import importlib
-    from lantern_core import jobs as j
-    return importlib.reload(j).start(*a, **k)
-
-
 class JobsTest(unittest.TestCase):
     def test_due_jobs_start_once_a_day_from_session_start(self):
         from lantern_core import jobs
@@ -188,7 +182,7 @@ class JobsTest(unittest.TestCase):
             self.assertEqual(jobs.due(), ["curate", "doctor", "discover"])
             spawned = []
             with mock.patch.object(jobs.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)), \
-                    mock.patch.object(hooks.jobs, "start", jobs.start.__wrapped__ if hasattr(jobs.start, "__wrapped__") else _real_start):
+                    mock.patch.object(hooks.jobs, "start", jobs.real_start):
                 hooks.session_start({"session_id": "s1", "source": "startup"})
                 hooks.session_start({"session_id": "s2", "source": "startup"})  # already started: not again
             self.assertEqual([c[-3] for c in spawned], ["curate", "doctor", "discover"])
@@ -199,19 +193,13 @@ class JobsTest(unittest.TestCase):
             self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor", "discover"])
 
 
-def _real_doctor_start():
-    import importlib
-    from lantern_core import doctor as d
-    return importlib.reload(d).start_server()
-
-
 class DoctorRepairTest(unittest.TestCase):
     def test_memory_server_down_is_started_not_reported(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
                 mock.patch.object(doctor.semantic, "search", return_value=None):
             spawned = []
             with mock.patch("subprocess.Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)), \
-                    mock.patch.object(doctor, "start_server", doctor.start_server.__wrapped__ if hasattr(doctor.start_server, "__wrapped__") else _real_doctor_start):
+                    mock.patch.object(doctor, "start_server", doctor.real_start_server):
                 status, msg = doctor.check_semantic()
             self.assertEqual(status, doctor.OK)
             self.assertIn("started", msg)
@@ -358,22 +346,15 @@ class InsightsTest(unittest.TestCase):
             db.close()
 
 
-def _real_survey_start(*a, **k):
-    import importlib
-    from lantern_core import survey as sv
-    return importlib.reload(sv).start(*a, **k)
-
-
 class SurveyTest(unittest.TestCase):
     def test_survey_starts_once_and_stores_its_brief(self):
         from lantern_core import survey, stage
-        survey.start = _real_survey_start
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
                 mock.patch.object(survey.curate, "available", return_value=True):
             spawned = []
             with mock.patch.object(survey.subprocess, "Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
-                self.assertTrue(survey.start())
-                self.assertFalse(survey.start())  # already running
+                self.assertTrue(survey.real_start())
+                self.assertFalse(survey.real_start())  # already running
             self.assertEqual(spawned[0][-3:-2], ["survey"])
             out = json.dumps({"result": "# What this machine is for\nA lab.\n# Profile\nA builder (inferred)."})
             with mock.patch.object(survey.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=out)):
@@ -383,4 +364,4 @@ class SurveyTest(unittest.TestCase):
             self.assertIn("A builder", memory.profile(db, 1000))
             self.assertIn("finished its survey", stage.top(db)[0]["message"])
             db.close()
-            self.assertFalse(survey.start())  # done: never again
+            self.assertFalse(survey.real_start())  # done: never again
