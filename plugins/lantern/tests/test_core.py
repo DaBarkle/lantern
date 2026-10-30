@@ -27,6 +27,19 @@ class PathsTest(unittest.TestCase):
                     self.assertEqual(paths.data_dir(), Path(want))
 
 
+class ProfileTest(unittest.TestCase):
+    def test_folder_profile_keeps_its_own_data(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/data"}):
+            proj = Path(d) / "proj" / "sub"
+            proj.mkdir(parents=True)
+            with mock.patch.object(paths.Path, "cwd", return_value=proj):
+                self.assertEqual(paths.data_dir(), Path(d) / "data")
+                (proj.parent / ".lantern.json").write_text('{"profile": "fresh"}')
+                self.assertEqual(paths.data_dir(), Path(d) / "data" / "profiles" / "fresh")
+                (proj.parent / ".lantern.json").write_text('{"profile": "../evil"}')
+                self.assertEqual(paths.data_dir(), Path(d) / "data")  # a bad name is ignored, never a path
+
+
 class HooksTest(unittest.TestCase):
     def test_session_start_reply_shape_and_data_dir(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{tmp}/d"}):

@@ -59,7 +59,7 @@ Lantern is four Claude Code hooks and one background process.
 - `PreToolUse` is the shield.
 - A memory server keeps the embedding model warm on localhost, token-protected, one per data folder.
 
-Data lives in the plugin's data folder (or `$LANTERN_HOME`). Nothing leaves your machine except the one daily curation call to Claude and, if you enable it, approval questions to ntfy.
+Data lives in the plugin's data folder (or `$LANTERN_HOME`). A folder can keep its own memory apart from the rest: put `{"profile": "work"}` in a `.lantern.json` there (or in a parent), and sessions in it get their own profile, rules, discovery and Stage. Nothing leaves your machine except the one daily curation call to Claude and, if you enable it, approval questions to ntfy.
 
 ## Develop
 
