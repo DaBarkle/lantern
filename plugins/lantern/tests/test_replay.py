@@ -24,7 +24,9 @@ def transcript(path: Path, session: str, day: int, turns: list[tuple[str, str]])
 
 OLD = [("the plex container on nyx keeps stopping overnight, what is going on with it", "Gluetun restarts and takes Plex down with it."),
        ("from now on never restart plex without asking me first, my parents stream from it", "Noted."),
-       ("<command-name>/status</command-name>", "ok")]
+       ("<command-name>/status</command-name>", "ok"),
+       ('Run `uv run --no-project --quiet "${CLAUDE_PLUGIN_ROOT}/lantern.py" profile`. Present it as a short page.', "ok"),
+       ("Stop hook feedback:\nREASONING QUALITY CHECK: you did a lot", "ok")]
 NEW = [("the plex container on nyx is stopping again this morning, can you sort it out", "I would restart the Plex container now."),
        ("no, I said ask first, my parents are watching", "Sorry, I will ask first."),
        ("explain what a reciprocal rank fusion is in two sentences", "It merges ranked lists by summed inverse ranks."),
@@ -49,7 +51,7 @@ class ReplayTest(unittest.TestCase):
 
     def test_pick_ground_truth_and_cutoff(self):
         sessions = replay.mine(self.projects)
-        self.assertEqual([t["ok"] for t in sessions["old"]], [True, True, False])  # the slash command is not the user's words
+        self.assertEqual([t["ok"] for t in sessions["old"]], [True, True, False, False, False])  # slash commands and hook text are not the user's words
         items, cutoff = replay.pick(sessions, 30)
         # "from now on ..." is followed only by a slash command, so it has no ground truth and is left out
         self.assertEqual([it["text"][:12] for it in items], ["the plex con", "the plex con", "no, I said a", "explain what"])
@@ -71,7 +73,8 @@ class ReplayTest(unittest.TestCase):
             asked.append(prompt)
             if schema is replay.TEXT:
                 return {"reply": "lantern reply" if "Lantern" in prompt.split("<conversation-so-far>")[0] else "plain reply"}
-            return {"needs_memory": "plex" in prompt, "X": {"reteach": 0, "wrong": False, "score": 4}, "Y": {"reteach": 2, "wrong": True, "score": 2}}
+            return {"needs_memory": "plex" in prompt, "X": {"reteach": 0, "wrong": False, "wrong_what": "", "score": 4},
+                    "Y": {"reteach": 2, "wrong": True, "wrong_what": "says nyx is a laptop", "score": 2}}
 
         def curate_ask(prompt):
             return [{"kind": "rule", "summary": "Never restart Plex without asking first; the user's parents stream from it.", "detail": "Said on Oct 1."}]
@@ -90,6 +93,11 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(set(plex["grades"]), {"vanilla", "lantern"})
         self.assertFalse((Path(self.tmp.name) / "real").exists())  # the real data folder was never written
         self.assertEqual(os.environ["LANTERN_HOME"], str(replay.DATA / "replay-memory"))
+        again = replay.rejudge(next(replay.DATA.glob("replay-*.jsonl")), ask=ask)
+        self.assertIn("3 of your prompts", again)
+        self.assertEqual(len(asked), 12)  # one judgement per prompt, no new replies
+        rejudged = [json.loads(l) for l in next(replay.DATA.glob("replay-*-rejudged.jsonl")).read_text().splitlines()]
+        self.assertEqual([r["grades"] for r in rejudged], [r["grades"] for r in out])  # same shuffle, same labels
 
 
 if __name__ == "__main__":

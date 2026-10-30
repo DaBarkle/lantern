@@ -11,6 +11,7 @@ model answer each prompt twice: once with nothing (vanilla), once with what Lant
 rules, notes, recall). A blind judge sees both replies in random order, with what you actually said next as ground truth.
 
 Usage: uv run --no-project evals/replay.py [N]      (default 30 prompts; replies and judge use claude-opus-5-5, REPLAY_MODEL overrides)
+       uv run --no-project evals/replay.py --rejudge evals/data/replay-<stamp>.jsonl   (grade a saved run again: N judge calls only)
 Cost: about 3 N short Opus calls, plus one curation call (the nightly job's model) per 60k characters of history.
 Run it once per real change. Your transcripts are only read; the scratch memory lives under evals/data and your real
 Lantern data is never touched. Starts one memory server on the scratch memory and proves it is gone afterwards.
@@ -39,7 +40,8 @@ MODEL = os.environ.get("REPLAY_MODEL", "claude-opus-5-5")
 HISTORY = 20  # every arm sees the conversation so far, as a real session would
 MIN_PROMPT = 40  # "yes", "ok", "do it" carry nothing to judge
 PER_SESSION = 4  # thirty prompts from one long session would all test the same topic
-INJECTED = ("<", "[", "Caveat:", "This session is being continued")  # text Claude Code put in the user slot, not the user
+INJECTED = ("<", "[", "Caveat:", "This session is being continued", "Stop hook feedback:")  # Claude Code's text in the user slot
+EXPANDED = ("${CLAUDE_PLUGIN_ROOT}", '/lantern.py" ')  # a slash command's body stands in the user slot too
 MIN_FREE_MB = 6000  # a run holds one memory server and two claude processes; never start into a machine under pressure
 
 REPLY = """You are Claude Code, the user's coding and operations assistant. Below is the context your harness loaded for this
@@ -67,6 +69,8 @@ Then for each reply give:
 - reteach: 0 = the user would not need to explain anything; 1 = a little; 2 = they would need to re-explain things
   their assistant should already know about them, their machines, rules or projects
 - wrong: true if the reply states something about the user or their setup that is false or out of date
+- wrong_what: when wrong, one line: the false or stale claim, what is actually true, and whether a loaded note said
+  it (quote its words) or the reply inferred it; "" when not wrong
 - score: 1-5 overall usefulness to this user
 Judge only what each reply says. Replies are labelled X and Y in random order.
 
@@ -80,8 +84,8 @@ X: {x}
 
 Y: {y}
 """
-GRADE = {"type": "object", "required": ["reteach", "wrong", "score"], "properties": {
-    "reteach": {"enum": [0, 1, 2]}, "wrong": {"type": "boolean"}, "score": {"type": "integer"}}}
+GRADE = {"type": "object", "required": ["reteach", "wrong", "wrong_what", "score"], "properties": {
+    "reteach": {"enum": [0, 1, 2]}, "wrong": {"type": "boolean"}, "wrong_what": {"type": "string"}, "score": {"type": "integer"}}}
 SCHEMA = {"type": "object", "required": ["needs_memory", "X", "Y"],
           "properties": {"needs_memory": {"type": "boolean"}, "X": GRADE, "Y": GRADE}}
 TEXT = {"type": "object", "required": ["reply"], "properties": {"reply": {"type": "string"}}}
@@ -119,7 +123,7 @@ def mine(projects: Path = PROJECTS) -> dict[str, list[dict]]:
                         turns[-1]["reply"] = (turns[-1]["reply"] + "\n" + text).strip()
                     continue
                 turns.append({"ts": _ts(e.get("timestamp", "")), "text": text, "reply": "",
-                              "ok": not text.startswith(INJECTED) and len(text) < 4000})
+                              "ok": not text.startswith(INJECTED) and not any(m in text for m in EXPANDED) and len(text) < 4000})
         if turns:
             sessions[f.stem] = turns
     return sessions
@@ -267,14 +271,37 @@ def grade(items: list[dict], ask) -> list[dict]:
             futs = {arm: pool.submit(ask, REPLY.format(context=ctx or "(none)", history=it["history"], prompt=it["text"]), TEXT)
                     for arm, ctx in (("vanilla", ""), ("lantern", it["lantern"]))}
             replies = {arm: f.result()["reply"] for arm, f in futs.items()}
-            order = list(replies)
-            rng.shuffle(order)
-            g = ask(JUDGE.format(prompt=it["text"], then=it["then"][-800:], next=it["next"][:800],
-                                 **{x: replies[a][:3000] for x, a in zip("xy", order)}), SCHEMA)
-            results.append({"session": it["session"], "prompt": it["text"], "first": it["first"], "needs_memory": g["needs_memory"],
-                            "replies": replies, "lantern_context": it["lantern"], "grades": {a: g[x] for x, a in zip("XY", order)}})
+            results.append(judge(it, replies, rng, ask))
             print(f"{k}/{len(items)}", file=sys.stderr, flush=True)
     return results
+
+
+def judge(it: dict, replies: dict, rng: random.Random, ask) -> dict:
+    order = list(replies)
+    rng.shuffle(order)
+    g = ask(JUDGE.format(prompt=it["text"], then=it["then"][-800:], next=it["next"][:800],
+                         **{x: replies[a][:3000] for x, a in zip("xy", order)}), SCHEMA)
+    return {"session": it["session"], "prompt": it["text"], "first": it["first"], "needs_memory": g["needs_memory"], "then": it["then"],
+            "next": it["next"], "replies": replies, "lantern_context": it["lantern"], "grades": {a: g[x] for x, a in zip("XY", order)}}
+
+
+def rejudge(path: Path, ask=None) -> str:
+    """Grade a saved run again (after a judge change) without new replies or a server; writes <path>-rejudged."""
+    ask = ask or (lambda prompt, schema: curate.ask(prompt, schema, MODEL))
+    rng = random.Random(7)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    truth = {}  # runs saved before "then"/"next" were kept: fetch the ground truth from the transcripts again
+    if any("next" not in r for r in rows):
+        truth = {(it["session"], it["text"]): it for it in pick(mine(), len(rows) * 2)[0]}
+    results = []
+    for r in rows:
+        t = truth.get((r["session"], r["prompt"]), {})
+        it = {"session": r["session"], "text": r["prompt"], "first": r["first"], "then": r.get("then", t.get("then", "")),
+              "next": r.get("next", t.get("next", "")), "lantern": r["lantern_context"]}
+        results.append(judge(it, r["replies"], rng, ask))
+    out = path.with_name(path.stem + "-rejudged.jsonl")
+    out.write_text("".join(json.dumps(r) + "\n" for r in results))
+    return report(results, 0, 0, True) + f"\nGrades: {out}"
 
 
 def report(results: list[dict], stored: int, curated: int, semantic_on: bool) -> str:
@@ -318,4 +345,7 @@ def main(n: int = 30, projects: Path = PROJECTS, ask=None, curate_ask=None, serv
 
 
 if __name__ == "__main__":
-    print(main(int(sys.argv[1]) if len(sys.argv) > 1 else 30))
+    if sys.argv[1:2] == ["--rejudge"]:
+        print(rejudge(Path(sys.argv[2])))
+    else:
+        print(main(int(sys.argv[1]) if len(sys.argv) > 1 else 30))
