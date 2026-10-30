@@ -1,8 +1,6 @@
 You are a demanding reviewer of Lantern, a Claude Code harness whose mission is "AGI in a harness". Below is a simulated week on a real machine, condensed into three session-days. Between days, real events happened on the machine and Lantern's hourly watcher ran:
 
-- Night 1: a new project folder "simrepo" appeared with an uncommitted file and no git remote; a user service "lantern-sim-fail.service" failed (exit code 1); Lantern's watcher ran.
-- Night 2: the failed unit was reset (fixed); simrepo's file was committed; the watcher ran again.
-- On day 1 the user stated a rule: "from now on, never restart Plex without asking me first".
+{events}
 
 Score 1-10 on exactly these seven multi-day promises, each with evidence from the transcript:
 1. Watches: did day 2 report the new failed unit and the new unbacked project, with causes, without the user asking for them specifically? Did day 3 report them resolved, with the reason, rather than silently dropping them?
