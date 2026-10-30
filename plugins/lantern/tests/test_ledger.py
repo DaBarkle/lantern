@@ -76,7 +76,7 @@ class LedgerTest(unittest.TestCase):
         p = Path(self.tmp.name) / "t.jsonl"
         write(p, [user("add a nightly backup timer"), assistant("ok", ("Edit", {"file_path": "/proj/backup.timer"}), ("Bash", {"command": "systemctl --user daemon-reload"}))])
         self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
-        write(p, [user("add a nightly backup timer"), assistant("ok"), user("now enable it"), assistant("enabled", ("Bash", {"command": "systemctl --user enable --now backup.timer"}))])
+        write(p, [user("add a nightly backup timer"), assistant("ok"), user("now enable it"), assistant("enabled. Next: check it fired at 03:00.", ("Bash", {"command": "systemctl --user enable --now backup.timer"}))])
         self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
         # a later session elsewhere must not hide the project's own last session
         write(p, [user("unrelated"), assistant("sure")])
@@ -85,6 +85,7 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("last session in this folder", ctx)
         self.assertIn("Goal: add a nightly backup timer", ctx)
         self.assertIn("Last asked: now enable it", ctx)
+        self.assertIn("Last reply ended: enabled. Next: check it fired at 03:00.", ctx)
         self.assertIn("/proj/backup.timer", ctx)
         self.assertIn("enable --now backup.timer", ctx)
         ctx = self.call("session-start", {"session_id": "s4", "source": "startup", "cwd": "/third"})["hookSpecificOutput"]["additionalContext"]

@@ -170,6 +170,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["failed"] += turn.get("failed", 0)
     d["turns"] += 1
     d["last"] = turn["user"][:400]
+    d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
     with db:
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
@@ -194,6 +195,8 @@ def ledger_last(db: sqlite3.Connection, exclude: str, within_s: float, cwd: str 
 
 def ledger_lines(d: dict) -> list[str]:
     out = [f"- Goal: {d['goal']}", f"- Last asked: {d['last']}"]
+    if d.get("reply"):
+        out.append(f"- Last reply ended: {d['reply']}")
     if d["files"]:
         out.append("- Files edited: " + ", ".join(d["files"]))
     if d["commands"]:
