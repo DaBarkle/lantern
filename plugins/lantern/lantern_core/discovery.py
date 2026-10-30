@@ -246,6 +246,22 @@ PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "l
          "UniFi Network": "lantern-unifi"}
 
 
+KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "service": "services",
+               "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN", "secret-manager": "password managers"}
+
+
+def describe(finds: list[dict]) -> str:
+    """The finds grouped by kind with names, for a reply that says what was found without digging."""
+    groups: dict[str, list[str]] = {}
+    for f in finds:
+        groups.setdefault(KIND_LABELS.get(f["kind"], f["kind"]), []).append(f["name"])
+    lines = []
+    for label, names in groups.items():
+        shown = ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
+        lines.append(f"  {label} ({len(names)}): {shown}")
+    return "\n".join(lines)
+
+
 def summary() -> str:
     """What is known about this machine, in one short paragraph for a session start."""
     caps = settings().get("capabilities", {})
@@ -296,6 +312,7 @@ def cli(argv: list[str]) -> int:
             save_settings(s)
             found = auto()  # a wider look takes effect at once, not tomorrow
             print(f"depth {s['depth']}, {DEPTHS[s['depth']]}; found and remembered {len(found)} new things")
+            print(describe(found))
             return 0
         print(f"depth {min(3, s['depth'])}, {DEPTHS[min(3, s['depth'])]}")
         return 0

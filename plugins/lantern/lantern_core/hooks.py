@@ -67,11 +67,13 @@ Say in one or two sentences what was found on the machine (projects, tools, pass
 Then propose the setup, as a short numbered list of what you suggest and why, and ask which they want (one question):
 1. a wider look at this machine: containers, services, installed apps, SSH hosts and local servers (read-only;
    `uv run --no-project --quiet "{entry}" depth 3` runs it at once and you then say what else was found);
-2. how secrets should flow: Lantern never lets a raw secret into a command or a note; if a password manager was found,
-   say Lantern can read from it on demand, otherwise offer `"{entry}" secret set NAME` (OS keychain) for tokens you will
-   need, run as `"{entry}" secret run NAME -- <command>`;
+2. how secrets are handled (nothing to do now): Lantern never lets a raw secret into a command, a note or this chat; if
+   a password manager was found, say Lantern will read from it only when a task needs a secret; otherwise say that when
+   a task first needs a token, Lantern will explain the one-line way to hand it over then. Do not check or configure
+   the password manager during onboarding;
 3. approvals on their phone for anything consequential (`"{entry}" approve setup` prints a topic for the ntfy app).
-Never suggest installing packs or restarting during onboarding: nothing Lantern does needs a new session.
+Report each step from the command's own output (the depth command lists what it found); do not inspect Lantern's files
+or database. Never give the user a command to run, never suggest installing packs, never suggest a new session.
 Do what they choose, step by step, saying what each step did. At the end, ask what they mostly use this machine for
 and what they would like Lantern to be careful about; store the answer with `"{entry}" remember --profile "<text>"`
 and any rule with `"{entry}" remember --rule "<text>"`. Then say Lantern is set and nothing else is needed:

@@ -226,6 +226,7 @@ class AutoDiscoveryTest(unittest.TestCase):
                 mock.patch.object(discovery, "discover", return_value=[find]):
             self.assertEqual(len(discovery.auto()), 1)
             self.assertEqual(discovery.auto(), [])  # known now
+            self.assertEqual(discovery.describe([find]), "  dev tools (1): docker")
             db = memory.connect()
             top = stage.top(db)
             self.assertIn("docker", top[0]["message"])
