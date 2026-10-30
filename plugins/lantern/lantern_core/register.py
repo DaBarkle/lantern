@@ -77,5 +77,8 @@ def guidance() -> str:
                 "mechanism stated plainly; question options name the exact unit or file.")
     return ("Write for a non-technical reader (the default until they use paths, units or commands themselves): consequence "
             "first in plain words, mechanism in one clause, no unit names, paths, commands or flags in the text (a trailing "
-            "'details:' line at most, only when they ask), question options in everyday words, one idea each."
-            + (f" Their own names for things, use them: {own}." if own else ""))
+            "'details:' line at most, only when they ask), question options in everyday words, one idea each. Name a problem "
+            "by what it does to them, not by its kind ('the drive is reporting damage', not 'file-table error'); never send "
+            "them to another program or computer: if a repair needs one, say so in one line and offer to walk them through "
+            "it here. When a check later in the same reply settles an earlier guess, say 'now confirmed:' so the two do not "
+            "read as a contradiction." + (f" Their own names for things, use them: {own}." if own else ""))
