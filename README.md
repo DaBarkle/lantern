@@ -4,7 +4,7 @@
 
 Install it once. From then on Claude Code knows your machines, your projects and how you like things done, learns a rule the moment you state it, picks up where the last session left off, and checks and repairs itself every day. You never tinker with it. One line tells you it is working.
 
-> Status: pre-release. The core works and is tested on Linux, macOS and Windows; the first public release is being prepared.
+> Status: pre-release. Used daily on one Linux machine; macOS and Windows paths are unit-tested with mocks and have not yet run on real hardware. The first public release is being prepared.
 
 ## Install
 
@@ -33,6 +33,8 @@ Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Sa
 No model call ever sits on the prompt path. A prompt costs Lantern about 150 milliseconds (measured on a 2,500-item memory; the doctor warns if 9 in 10 hook runs exceed its budget).
 
 ## Commands
+
+You never need these: everything above happens in the conversation, and Lantern runs its own commands. They exist for people who like a direct handle.
 
 | Command | What it does |
 | --- | --- |

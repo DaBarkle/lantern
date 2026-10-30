@@ -1,8 +1,8 @@
 # Platforms
 
 What Lantern needs, what it does on each kind of machine, and how much of that has been seen on real hardware.
-Audit of 2026-10-31 over `plugins/lantern` (core, hooks, packs). CI runs the unit tests on Ubuntu, macOS and Windows
-runners; everything marked *mocked* has only been exercised that way.
+Audit of 2026-10-31 over `plugins/lantern` (core, hooks, packs). CI is set up to run the unit tests on Ubuntu, macOS and Windows
+runners but has not run yet (the repository has no remote); everything marked *mocked* has only been exercised that way.
 
 ## The one requirement
 
