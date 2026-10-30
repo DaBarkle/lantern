@@ -27,8 +27,8 @@ Read what explains this machine: README files of the main projects, docker-compo
 these headings and nothing else:
 # What this machine is for
 # How it is set up
-(services, containers, VMs, how projects relate, where data lives; include a mermaid flowchart of the main services and
-what depends on what, if there are at least three)
+(services, containers, VMs, how projects relate, where data lives; include a markdown table "component | runs on |
+depends on" for the main services, and an indented text tree of how they connect; no mermaid, it does not render here)
 # Worth knowing
 (things the owner may not know or has forgotten: stale or unbacked projects, odd configs, duplicated tools, risks; each
 one specific, with the file or folder that shows it)

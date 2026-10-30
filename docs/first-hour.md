@@ -16,8 +16,8 @@ Then two questions for the profile (what the machine is for; what to be careful 
 Lantern now does, with one concrete thing it can do right now.
 
 **A few minutes in.** The survey finishes and announces itself on Stage: Lantern's understanding of the machine, what is
-worth knowing (with the files that show it), what it proposes to take on, and a service map as a mermaid flowchart
-where the client renders it.
+worth knowing (with the files that show it), what it proposes to take on, and a service map as a table and an indented
+tree (mermaid is not rendered in Claude Code's desktop tab, so Lantern never relies on it).
 
 **Session two.** Opens with what was learned since, the survey's understanding, where the last session left off, and
 the findings that still stand. Nothing to run, nothing to configure.

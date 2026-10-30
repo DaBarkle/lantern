@@ -85,13 +85,14 @@ Your first reply, in this order:
 7. Close with "What Lantern now does for you" as a table (memory, context, learning, daily checks, the responsibilities
    taken on, secrets, approvals) and one concrete thing it can do right now from the findings, offered as a next step.
 When the survey finishes, the Stage will say so: then show its "Worth knowing" and "What Lantern should take on" as
-a table or list, and if it contains a mermaid flowchart show it in a ```mermaid block (it renders where the client
-supports it; otherwise it reads as text). Report every step from the command's own output; never read Lantern's files
+a table or list, and its service map as the table and indented tree it contains (never mermaid: Claude Code's desktop
+tab shows it as raw text). Report every step from the command's own output; never read Lantern's files
 or database. Never give the user a command to run, never suggest packs, never suggest a new session. After any task,
 end by offering the next useful thing in one line."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
 `uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
-choices with the AskUserQuestion tool; explain with tables or short lists; show service maps as ```mermaid flowcharts.
+choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid: it does
+not render in Claude Code's desktop tab).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status` as a
 small table. After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""

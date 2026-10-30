@@ -52,7 +52,7 @@ def save_settings(s: dict) -> None:
 
 def _which(name: str) -> str | None:
     """Where a tool is, on this machine or on the host behind a container."""
-    found = shutil.which(name)
+    found = None if (HOST_EXEC and name in HOST_TOOLS) else shutil.which(name)
     if found or not HOST_EXEC:
         return found
     try:
@@ -62,9 +62,12 @@ def _which(name: str) -> str | None:
         return None
 
 
+HOST_TOOLS = {"systemctl", "podman", "docker", "flatpak", "virsh", "tailscale", "lspci", "wg", "zerotier-cli"}
+
+
 def _run(cmd: list[str]) -> str:
-    if HOST_EXEC and not shutil.which(cmd[0]):
-        cmd = [HOST_EXEC, *cmd]  # not in the container: ask the host
+    if HOST_EXEC and (cmd[0] in HOST_TOOLS or not shutil.which(cmd[0])):
+        cmd = [HOST_EXEC, *cmd]  # the container's own systemctl or podman cannot see the host; ask the host
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT).stdout
     except (OSError, subprocess.TimeoutExpired):

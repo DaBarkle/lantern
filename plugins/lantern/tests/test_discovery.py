@@ -68,3 +68,9 @@ class HostExecTest(unittest.TestCase):
             self.assertEqual(discovery._which("podman"), "plex\tdocker.io/plex")  # whatever the host answers
             discovery._run(["podman", "ps"])
         self.assertEqual(calls[-1][:2], ["/usr/bin/distrobox-host-exec", "podman"])
+        # systemctl exists inside the container too, but only the host's can see the user's services
+        with mock.patch.object(discovery, "HOST_EXEC", "/usr/bin/distrobox-host-exec"), \
+                mock.patch.object(discovery.shutil, "which", return_value="/usr/bin/systemctl"), \
+                mock.patch.object(discovery.subprocess, "run", side_effect=fake):
+            discovery._run(["systemctl", "--user", "list-units"])
+        self.assertEqual(calls[-1][:2], ["/usr/bin/distrobox-host-exec", "systemctl"])
