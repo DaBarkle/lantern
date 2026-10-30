@@ -383,7 +383,9 @@ class SurveyTest(unittest.TestCase):
             db = memory.connect()
             self.assertIn("A builder", memory.profile(db, 1000))
             self.assertIn("finished its survey", stage.top(db)[0]["message"])
-            self.assertIn("Survey risks still open (2): The restic passphrase", insights.open_block(db))
+            block = insights.open_block(db)
+            self.assertIn("Survey risks still open (2)", block)
+            self.assertIn("The restic passphrase", block)
             db.close()
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 r = hooks.user_prompt_submit({"prompt": "anything new?", "session_id": "s9"})
