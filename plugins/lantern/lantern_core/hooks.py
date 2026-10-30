@@ -538,15 +538,6 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines += ["A rule above states its reason. Before acting on it, run one read-only check of whether that reason holds "
                       "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
                       "applies either way."]
-    since = discovery.settings().get("since_last") or {}
-    first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
-    if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
-        said = turn["reply"].lower()
-        missing = [n for n in since["names"] if n.lower() not in said]
-        if missing:
-            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
-                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
-                    + ". Add one line per item with its state."}
     at = discovery.settings().get("insights_at", 0)
     if HEALTH_ASK.search(prompt) and time.time() - at < SNAPSHOT_FRESH_S:
         # The cheap checks run again right now, so the answer is current and the reply never needs an "I haven't looked
