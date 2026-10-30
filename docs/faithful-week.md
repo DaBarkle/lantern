@@ -88,3 +88,24 @@ Usage is not the constraint; memory is. The machine also runs the Nyx VM, Wazuh,
 ## Results
 
 See the dated entries below; each is one week on the stated commit.
+
+### 2026-10-30, week 1 on 03e0868 (first faithful run)
+
+Rig lint: 0 headless phrases, 0 verbatim re-offers (the old rig's weeks had both every time). Held out: a new user
+timer and a 600 MB scratch file; the file was caught on day 2, the timer was not (Lantern was at depth 2, where timers
+are not scouted; the rig now has the user consent to the wider look in words). Day 1 was contaminated by an earlier
+smoke session in the same folder, which Lantern correctly picked up as "last session"; the rig now wipes the probe
+folder's session files too.
+
+Critic medians (three Opus critics, two agreeing exactly): watches 7, open loops 5, rules 4, since-last 5, sharper 6.
+After verification: the "rules 4" finding was refuted (the user had asked for the restart, so trying it honoured
+"ask me first"; the rig's permission policy, not Lantern, stopped it), three findings were traced to the rig, and three
+survived as harness work:
+
+1. The since-last diff counts one changed finding as one resolved plus one new, and its counts disagree with its lists
+   (`lantern_core/insights.py`, `diff_since_last`): match findings by subject and add a CHANGED state; build counts and
+   bullets from the same object.
+2. Day-1 open loops vanish by day 3 (`lantern_core/hooks.py`, loop capture): keep loops in the ledger until closed,
+   re-asked or retired; widen the loop pattern to "I can", "I propose", "still blocked".
+3. "I didn't check X" for things a read-only command could answer: a Stop-hook nudge that makes the model run the
+   check once before stopping.
