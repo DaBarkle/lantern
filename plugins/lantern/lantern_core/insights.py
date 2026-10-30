@@ -241,7 +241,8 @@ def discovered_since_last(db) -> str:
 
 def _subject(key: str) -> str:
     """The thing a finding is about (a repo path, a unit, a volume), without its kind."""
-    return key.removeprefix("insight/").partition("/")[2]
+    rest = key.removeprefix("insight/").partition("/")[2]
+    return rest.split(":", 1)[1] if ":" in rest.split("/", 1)[0] else rest  # "repo:/p" and "/p" are one subject
 
 
 _KIND_WORDS = {"repo-risk": "uncommitted or unpushed work in", "repo-noremote": "no git remote for", "repo-stale": "no recent commit in",

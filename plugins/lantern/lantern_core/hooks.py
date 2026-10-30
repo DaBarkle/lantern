@@ -298,8 +298,8 @@ def session_start(payload: dict) -> dict | None:
                   f"services, backup jobs, new scheduled jobs) ran at {time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}"
                   f" and found: {watches}. When the user asks whether things are OK, that is the answer: say it in plain words first "
                   "(what is failing, what is fine), then look deeper only if useful. A declined or failed command never leaves the "
-                  "user without an answer; you have this one. Duties beyond these watches are proposals until the user says yes; "
-                  "say which are active and which are only proposed."]
+                  "user without an answer; you have this one. Duties beyond these watches: a read-only one is on from the moment it is named; "
+                  "only a duty that changes the machine stays a proposal until the user says yes. Say which is which."]
         tail_block += [f"Phone alerts: {alerts.status()}. Change it with `alerts on|off` or `alerts kinds ...` after a structured "
                        "question, never by editing a file."]
         pending = discovery.settings().get("pending") or []
@@ -319,7 +319,7 @@ def session_start(payload: dict) -> dict | None:
         lines.insert(1, "Since last session, in brief: " + tail_block[0][:300].rstrip() + " (The full SINCE LAST SESSION block closes "
                      "this context; your first reply opens from it.)")  # named at the top too: a long context must not bury it
         lines += ["", "SINCE LAST SESSION (computed by Lantern; open your first reply with one or two sentences built only from "
-                  "these lines, using their counts and reasons word for word (names of things as the register line above says); never split a count into parts of your own; name every "
+                  "these lines, using their counts and reasons exactly, each item by its plain name (names of things as the register line above says); never split a count into parts of your own; name every "
                   "item in a 'Found on this machine' line; then answer):"] + tail_block
         lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
                   "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
@@ -354,6 +354,9 @@ def capture_last_session(cwd: str, current: str) -> None:
             last = db.execute("SELECT text FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (sid,)).fetchone()
             if not (last and last[0].startswith(f"User: {turn['user'][:CAPTURE_CHARS]}"[:200])):
                 _store_turn(db, sid, cwd, turn)
+            elif _empty_reply(last[0]) and turn["reply"].strip():
+                row = db.execute("SELECT id FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (sid,)).fetchone()
+                _repair_turn(db, row[0], sid, cwd, turn)  # the session's last reply was stored empty: its loops matter most
         finally:
             db.close()
         return
@@ -372,12 +375,27 @@ def capture_previous(payload: dict) -> None:
     head = f"User: {turn['user'][:CAPTURE_CHARS]}"
     db = memory.connect()
     try:
-        last = db.execute("SELECT text FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (session,)).fetchone()
-        if last and last[0].startswith(head[:200]):
+        last = db.execute("SELECT id, text FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (session,)).fetchone()
+        if last and last[1].startswith(head[:200]):
+            if _empty_reply(last[1]) and turn["reply"].strip():
+                _repair_turn(db, last[0], session, payload.get("cwd") or "", turn)  # Stop ran before the text landed
             return  # the Stop hook already captured it
         _store_turn(db, session, payload.get("cwd") or "", turn)
     finally:
         db.close()
+
+
+def _empty_reply(text: str) -> bool:
+    body = text.split("\nAssistant:", 1)[1] if "\nAssistant:" in text else ""
+    return not body.split("\nActions:", 1)[0].strip()
+
+
+def _repair_turn(db, item_id: int, session: str, cwd: str, turn: dict) -> None:
+    """Fill in a turn that was stored before its reply existed, and let the ledger see the reply's unfinished items."""
+    text = f"User: {turn['user'][:CAPTURE_CHARS]}\nAssistant: {memory.carry(turn['reply'], CAPTURE_CHARS)}"
+    with db:
+        db.execute("UPDATE items SET text=? WHERE id=?", (shield.redact(text), item_id))
+    memory.ledger_update(db, session, cwd, {**turn, "files": [], "commands": [], "agents": [], "failed": 0})
 
 
 def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
@@ -649,6 +667,11 @@ def record_answers(db, path: str) -> None:
 
 def stop(payload: dict) -> dict | None:
     turn = transcript.last_turn(payload.get("transcript_path", ""))
+    for _ in range(4):
+        if turn["reply"].strip() or not turn["user"]:
+            break
+        time.sleep(0.4)  # the final text block can land in the transcript a moment after Stop fires
+        turn = transcript.last_turn(payload.get("transcript_path", ""))
     if not turn["user"] or _is_system(turn["user"]):
         return None
     db = memory.connect()

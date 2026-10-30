@@ -280,6 +280,20 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(s["insights"], ["insight/failed/x.service"])  # the scout wrote only its own key
         self.assertIn("tool:sh", s["capabilities"])
 
+    def test_a_reply_stored_empty_is_repaired_at_the_next_capture(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("plex looks stuck, restart it now")])  # Stop fired before the text landed
+        self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
+        db = memory.connect()
+        self.assertTrue(hooks._empty_reply(db.execute("SELECT text FROM items WHERE kind='turn'").fetchone()[0]))
+        write(p, [user("plex looks stuck, restart it now"), assistant("Not restarted. I'll ask for the Plex key the first time a restart actually comes up.")])
+        with mock.patch.object(hooks.semantic, "search", return_value=None):
+            hooks.user_prompt_submit({"prompt": "ok", "session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
+        self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn'").fetchone()[0], 1)  # repaired in place, not duplicated
+        self.assertIn("Plex key", db.execute("SELECT text FROM items WHERE kind='turn'").fetchone()[0])
+        self.assertIn("I'll ask for the Plex key the first time a restart actually comes up", memory.ledger_get(db, "s1")["loops"])
+        db.close()
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
@@ -763,6 +777,9 @@ class RuleTouchingTest(unittest.TestCase):
             self.assertIn("Standing rules that touch this request", ctx)
             self.assertIn("never restart Plex", ctx)
             self.assertNotIn("keep replies short", ctx)
+            db = memory.connect()
+            self.assertEqual(memory.rules_touching(db, "what should I fix first?"), [])  # "first" alone touches no rule
+            db.close()
             self.assertNotIn("states its reason", ctx)  # no reason given, nothing to pre-check
             db = memory.connect()
             memory.add(db, "rule", "said:s0", "never restart Plex without asking me first, it breaks my parents' stream")

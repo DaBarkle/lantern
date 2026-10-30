@@ -152,9 +152,13 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: boo
     return out
 
 
+_FILLER = frozenset("first should could would please thing things something anything everything right wrong next last today "
+                    "tonight check look know think want need help fix fixed broken stuck okay maybe really still again".split())
+
+
 def rules_touching(db: sqlite3.Connection, prompt: str, limit: int = 2) -> list[str]:
     """Standing rules that share a distinctive word with the request ("restart", "plex"), so they are applied, not just loaded."""
-    words = [w for w in terms(prompt) if len(w) >= 4]
+    words = [w for w in terms(prompt) if len(w) >= 4 and w not in _FILLER]  # "first", "should" touch no rule
     if not words:
         return []
     match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
