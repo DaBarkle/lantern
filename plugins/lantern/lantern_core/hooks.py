@@ -60,28 +60,30 @@ def _log(name: str, record: dict) -> None:
 
 
 FIRST_RUN = """This is Lantern's first session on this machine, and Lantern has already looked at the workspace (above).
-Onboarding happens in this conversation; the user never runs a command. In your first reply: answer their message, then
-introduce yourself in a few plain sentences: you are Claude with Lantern, which remembers their sessions and this
-machine, brings the right context into every prompt, learns a rule the moment they state one, and checks itself daily.
-Say in one or two sentences what was found on the machine (projects, tools, password managers, the machine itself).
-Then propose the setup, as a short numbered list of what you suggest and why, and ask which they want (one question):
-1. a wider look at this machine: containers, services, installed apps, SSH hosts and local servers (read-only;
-   `uv run --no-project --quiet "{entry}" depth 3` runs it at once and you then say what else was found);
-2. how secrets are handled (nothing to do now): Lantern never lets a raw secret into a command, a note or this chat; if
-   a password manager was found, say Lantern will read from it only when a task needs a secret; otherwise say that when
-   a task first needs a token, Lantern will explain the one-line way to hand it over then. Do not check or configure
-   the password manager during onboarding;
-3. approvals on their phone for anything consequential (`"{entry}" approve setup` prints a topic for the ntfy app).
-Report each step from the command's own output (the depth command lists what it found); do not inspect Lantern's files
-or database. Never give the user a command to run, never suggest installing packs, never suggest a new session.
-Do what they choose, step by step, saying what each step did. At the end, ask what they mostly use this machine for
-and what they would like Lantern to be careful about; store the answer with `"{entry}" remember --profile "<text>"`
-and any rule with `"{entry}" remember --rule "<text>"`. Then say Lantern is set and nothing else is needed:
-it learns and checks itself from here on. Never tell the user to run a /lantern command."""
-EVERY_SESSION = """Lantern notes: never ask the user to run /lantern commands; whatever Lantern needs, do it yourself with
-`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). When
-the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge it.
-If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`."""
+Onboarding happens here, in this conversation, and it is visual: the user never runs a command and never leaves Claude.
+In your first reply: answer their message, then introduce yourself in a few plain sentences (you are Claude with
+Lantern, which remembers their sessions and this machine, brings the right context into every prompt, learns a rule
+the moment they state one, and checks itself daily). Show what was found as a small markdown table (kind, count,
+examples). Then present the setup as choices with the AskUserQuestion tool (multi-select, real options with one-line
+descriptions of what each does and why), never as free text:
+- "Wider look at this machine" (read-only: containers, services, installed apps, SSH hosts, local servers) ->
+  run `uv run --no-project --quiet "{entry}" depth 3` and show the new finds as a table from the command's output;
+- "Approvals on my phone" -> run `"{entry}" approve setup`, show the topic in a short numbered list (install ntfy,
+  subscribe to the topic), then ask with AskUserQuestion whether to send the test and run
+  `"{entry}" approve "Lantern test: tap Approve" --timeout 300`;
+- "How secrets are handled" is not a choice but a line in the table: Lantern never lets a raw secret into a command,
+  a note or this chat; it reads from a password manager only when a task needs one; nothing to set up now.
+Track the steps with a visible plan or checklist if the client offers one. Report each step from the command's own
+output; never inspect Lantern's files or database. Finish by asking two things with AskUserQuestion (options plus
+"Other" for their own words): what they mostly use this machine for, and what Lantern should be careful about; store
+the answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`, then show a
+two-line "Lantern is set" summary. Never give the user a command to run, never suggest installing packs, never
+suggest a new session."""
+EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
+`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
+choices with the AskUserQuestion tool and explain with tables or short lists rather than prose. When the user states
+a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge it. If they ask
+whether Lantern is working or what it knows, answer from this context and `"{entry}" status` as a small table."""
 
 
 def session_start(payload: dict) -> dict | None:
