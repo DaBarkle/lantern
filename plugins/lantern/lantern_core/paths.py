@@ -1,4 +1,5 @@
 """Where Lantern keeps its state, on any OS."""
+import hashlib
 import json
 import os
 import re
@@ -35,19 +36,18 @@ def _os_default() -> Path:
 
 
 def _pointer() -> Path:
-    """Where the hooks note the data folder Claude Code gave them, so `lantern ...` commands run from a shell (which has
-    no CLAUDE_PLUGIN_DATA) use the same folder as the session."""
-    return _os_default() / "data-dir"
+    """Where this plugin copy's hooks note the data folder Claude Code gave them, so `lantern ...` commands run from a
+    shell (which has no CLAUDE_PLUGIN_DATA) use the same folder as the session. One file per copy of the plugin: a
+    worktree under test or a second install never redirects another copy's commands."""
+    root = Path(__file__).resolve().parents[1]
+    return _os_default() / "data-dirs" / hashlib.sha1(str(root).encode()).hexdigest()[:12]
 
 
 def data_dir() -> Path:
     if os.environ.get("CLAUDE_PLUGIN_DATA"):
         base = Path(os.environ["CLAUDE_PLUGIN_DATA"])
         try:
-            current = _pointer().read_text().strip() if _pointer().exists() else ""
-            # A plugin loaded from a folder (`--plugin-dir`, data under "lantern-inline") is a trial run: it never
-            # redirects the user's shell commands away from the installed plugin's data.
-            if current != str(base) and not (current and base.name == "lantern-inline"):
+            if not (_pointer().exists() and _pointer().read_text().strip() == str(base)):
                 _pointer().parent.mkdir(parents=True, exist_ok=True)
                 _pointer().write_text(str(base))
         except OSError:

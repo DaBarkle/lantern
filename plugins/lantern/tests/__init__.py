@@ -10,6 +10,7 @@ import tempfile
 from lantern_core import discovery, doctor, insights, jobs, paths, survey  # noqa: E402
 
 _POINTER = Path(tempfile.mkdtemp()) / "data-dir"  # tests must never rewrite the user's own data-dir pointer
+paths.real_pointer = paths._pointer
 mock.patch.object(paths, "_pointer", lambda: _POINTER).start()
 
 jobs.real_start = jobs.start

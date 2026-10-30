@@ -31,16 +31,26 @@ class PathsTest(unittest.TestCase):
 class PointerTest(unittest.TestCase):
     def test_shell_commands_find_the_sessions_data_folder(self):
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(paths, "_pointer", return_value=Path(d) / "default" / "data-dir"):
+            env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME")}
+            with mock.patch.object(paths, "_pointer", return_value=Path(d) / "copy-a"):
                 with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/plugin-data"}):
                     self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a hook, inside Claude Code
-                env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME")}
                 with mock.patch.dict(os.environ, env, clear=True):
                     self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a `lantern` command from a shell
+            with mock.patch.object(paths, "_pointer", return_value=Path(d) / "copy-b"):  # a worktree loaded with --plugin-dir
                 with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/lantern-inline"}):
-                    self.assertEqual(paths.data_dir(), Path(d) / "lantern-inline")  # a folder-loaded trial run
+                    self.assertEqual(paths.data_dir(), Path(d) / "lantern-inline")
                 with mock.patch.dict(os.environ, env, clear=True):
-                    self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # ...never redirected the shell
+                    self.assertEqual(paths.data_dir(), Path(d) / "lantern-inline")  # its own commands follow it...
+            with mock.patch.object(paths, "_pointer", return_value=Path(d) / "copy-a"), mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # ...the installed copy's never moved
+
+    def test_each_plugin_copy_has_its_own_pointer(self):
+        a = paths.real_pointer()
+        with mock.patch.object(paths, "__file__", "/elsewhere/lantern/lantern_core/paths.py"):
+            self.assertNotEqual(paths.real_pointer(), a)
+        self.assertEqual(paths.real_pointer(), a)
+        self.assertEqual(a.parent, paths._os_default() / "data-dirs")
 
 
 class ProfileTest(unittest.TestCase):

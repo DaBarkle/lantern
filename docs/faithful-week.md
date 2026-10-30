@@ -82,8 +82,9 @@ Usage is not the constraint; memory is. The machine also runs the Nyx VM, Wazuh,
 - Never touch Tailscale, the Nyx VM, real services, real backups or the real Lantern memory
   (`~/.claude/plugins/data/lantern-lantern`). The rig's only writes outside its profile are the listed events, all undone
   in `finally`.
-- The hooks rewrite `~/.local/share/lantern/data-dir` to the inline data folder while a `--plugin-dir` session runs;
-  the rig restores it, but shell `lantern` commands typed during a run would see the sim profile.
+- Each plugin copy keeps its own data-folder pointer (`~/.local/share/lantern/data-dirs/<copy>`), so a `--plugin-dir`
+  session's hooks and the shell `lantern` commands run from that same checkout agree, and the installed copy's commands
+  are never redirected.
 
 ## Results
 
