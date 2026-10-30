@@ -18,13 +18,16 @@ MODEL = "haiku"
 MAX_CHARS = 60000  # about a day of turns; older turns were curated by earlier runs
 SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
     "type": "object", "required": ["kind", "summary", "detail"], "properties": {
-        "kind": {"enum": ["rule", "fact", "profile"]}, "summary": {"type": "string"}, "detail": {"type": "string"}}}}}}
+        "kind": {"enum": ["rule", "fact", "pattern", "profile"]}, "summary": {"type": "string"}, "detail": {"type": "string"}}}}}}
 PROMPT = """Below are recent exchanges between a user and their coding and operations assistant. List only what
 should still hold in future sessions:
 - rule: something the user asked for or corrected that should change how the assistant works from now on
   ("never restart X without asking", "keep replies short", "don't use hacky workarounds")
 - fact: a durable fact about the user's machines, services, accounts, people or projects
   ("Plex runs as container-plex.service", "Paperclip was shut down on purpose on Oct 27")
+- pattern: a way of working or a procedure that solved something and will apply again: the symptom, its cause
+  and the fix, or the order things must be done in ("if Nyx services show network errors, check Gluetun first";
+  "re-establish the SSH socket before touching Nyx"; "changes to the media stack get logged in the as-built")
 - profile: something about who the user is and how they like to work (role, skills, habits, what they care about)
 If an exchange shows that a KNOWN item is now wrong or has changed, return the corrected item: it replaces the old one.
 Not: one-off task steps, things already done and finished, guesses, or anything secret (passwords, tokens, keys).

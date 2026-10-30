@@ -28,8 +28,8 @@ SHORT_PROMPT_TERMS = 8  # below this, the session's own names join the recall qu
 # A correction holds from the moment it is said, not from tomorrow's curation.
 CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|stop|from now on|in future|i(?:'ve| have)? told you|i said|"
                         r"i asked you|remember(?: that| to)?|make sure(?: you)?|you (?:should|must|need to))\b", re.I)
-KIND_WEIGHT = {"fact": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
-CURATED = {"fact", "rule", "doc"}
+KIND_WEIGHT = {"fact": 1.5, "pattern": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
+CURATED = {"fact", "rule", "pattern", "doc"}
 CURATED_MIN_TERMS = 9
 
 
@@ -54,6 +54,7 @@ def session_start(payload: dict) -> dict | None:
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact")
+        patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern")
         session = payload.get("session_id", "?")
         cwd = payload.get("cwd") or ""
         previous = memory.ledger_last(db, session, PROJECT_RESUME_DAYS * 86400, cwd=cwd) if cwd else None
@@ -75,6 +76,8 @@ def session_start(payload: dict) -> dict | None:
     if rules:
         # Standing rules apply everywhere, so like the profile they are loaded, not searched for.
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
+    if patterns:
+        lines += ["", "How the user's systems are worked on (patterns learned from past sessions):"] + [f"- {p}" for p in patterns]
     if index:
         lines += ["", "Notes Lantern holds (one line each; recall brings in detail when a prompt matches):"] + [f"- {i}" for i in index]
     caps = discovery.settings().get("capabilities", {})

@@ -152,8 +152,9 @@ class CurateUpdateTest(unittest.TestCase):
             memory.add(db, "turn", "s1", "User: plex moved to 32401\nAssistant: noted", created=time.time() - 60)
             db.close()
             fake = lambda p: [{"kind": "fact", "summary": "Plex listens on port 32401 on bazzite.", "detail": "moved Oct 30"},
-                              {"kind": "profile", "summary": "David games on this PC in the evenings.", "detail": "said so"}]
-            self.assertEqual(curate.run(ask=fake), 2)
+                              {"kind": "profile", "summary": "David games on this PC in the evenings.", "detail": "said so"},
+                              {"kind": "pattern", "summary": "If Nyx services show network errors, check Gluetun first.", "detail": "it gateways them all"}]
+            self.assertEqual(curate.run(ask=fake), 3)
             db = memory.connect()
             self.assertEqual(db.execute("SELECT status FROM items WHERE id=?", (old,)).fetchone()[0], "superseded")
             self.assertIn("games on this PC", memory.profile(db, 1000))
@@ -161,6 +162,8 @@ class CurateUpdateTest(unittest.TestCase):
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("32401", ctx)
             self.assertNotIn("32400", ctx)
+            self.assertIn("patterns learned", ctx)
+            self.assertIn("check Gluetun first", ctx)
 
 
 if __name__ == "__main__":
