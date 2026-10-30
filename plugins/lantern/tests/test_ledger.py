@@ -113,10 +113,10 @@ class LedgerTest(unittest.TestCase):
         with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 600}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
         self.assertEqual(out["decision"], "block")
-        self.assertIn("within the last two hours", out["reason"])
+        self.assertIn("answer from Lantern's own watches, which ran at", out["reason"])
         with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-        self.assertNotIn("within the last two hours", out["reason"])  # no fresh snapshot to point at; only the plain "couldn't check" nudge remains
+        self.assertNotIn("answer from Lantern's own watches", out["reason"])  # no fresh snapshot to point at; only the plain "couldn't check" nudge remains
 
     def test_reader_level_follows_the_users_words(self):
         with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
@@ -226,7 +226,7 @@ class LedgerTest(unittest.TestCase):
         write(p, [user("is the drive ok?"), assistant("Probably. Should I run the read-only drive health check?")])
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-        self.assertIn("offers a read-only check instead of doing it", out["reason"])
+        self.assertIn("run the read-only checks the reply only offers or admits skipping", out["reason"])
         write(p, [user("plex is stuck"), assistant("Should I run the restart now?")])
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a change is asked about, rightly
@@ -240,7 +240,7 @@ class LedgerTest(unittest.TestCase):
         write(p, [user("hello"), assistant("I could not see which account this machine is signed in to; that check was declined. Allow it the next time it comes up. Meanwhile the project stays local.")])
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-        self.assertIn("never put back on the user", out["reason"])
+        self.assertIn("puts a declined check back on the user", out["reason"])
         write(p, [user("hello"), assistant("Your project exists only here. The disk is fine and nothing has failed.\n\nNext I can put the project online; say so when you want that.")])
         with mock.patch.object(hooks.discovery, "settings", return_value={}):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # one plain offer is fine
@@ -269,14 +269,14 @@ class LedgerTest(unittest.TestCase):
         write(p, [user("what changed?"), assistant("Since last session: 1 resolved, 1 new. The new one is simrepo, which has no remote.")])
         with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["lantern-sim-fail.service", "simrepo"], "at": time.time()}}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-            self.assertIn("Not named yet: lantern-sim-fail.service", out["reason"])
+            self.assertIn("not named yet: lantern-sim-fail.service", out["reason"])
             write(p, [user("what changed?"), assistant("lantern-sim-fail.service is resolved and simrepo is new.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
             write(p, [user("hi"), assistant("Hello."), user("add a timer"), assistant("Done.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a later unrelated turn is not held to it
             write(p, [user("hi"), assistant("Hello."), user("what changed since yesterday?"), assistant("Both changes are drafted below.")])
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-            self.assertIn("Not named yet: lantern-sim-fail.service, simrepo", out["reason"])  # a since-last question is, whenever it comes
+            self.assertIn("not named yet: lantern-sim-fail.service, simrepo", out["reason"])  # a since-last question is, whenever it comes
 
     def test_a_background_accept_does_not_clobber_session_settings(self):
         from lantern_core import discovery
@@ -324,6 +324,24 @@ class LedgerTest(unittest.TestCase):
         db = memory.connect()
         self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn' AND text LIKE 'Agent result:%'").fetchone()[0], 1)
         db.close()
+
+    def test_a_gap_answered_later_in_the_same_reply_is_not_carried(self):
+        reply = ("Not done: I haven't checked the backup yet or cleaned anything off the disk.\n\n"
+                 "Checked after all: your main Hermes work is copied to Nyx every night and the backup at 3:44 worked.")
+        self.assertTrue(memory.closed_later(reply, "I haven't checked the backup yet or cleaned anything off the disk"))
+        db = memory.connect()
+        memory.ledger_update(db, "s9", "/proj", {"user": "hi", "reply": reply, "files": [], "commands": [], "agents": [], "failed": 0})
+        self.assertEqual(memory.ledger_get(db, "s9")["loops"], [])
+        db.close()
+
+    def test_all_objections_come_in_one_nudge(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("what changed since yesterday?"), assistant("Two new things. I didn't check the journal for the failed unit. Want me to list what could be cleared?")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["simrepo"], "at": time.time()}}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertIn("(1) name every item", out["reason"])
+        self.assertIn("(2) run the read-only checks", out["reason"])
+        self.assertIn("I didn't check the journal", out["reason"]); self.assertIn("Want me to list", out["reason"])
 
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage

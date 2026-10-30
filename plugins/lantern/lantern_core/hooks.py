@@ -750,45 +750,39 @@ def stop_nudge(payload: dict) -> dict | None:
             _log("nudge", {"fallback": True, "user": turn["user"][:200]})
             return {"systemMessage": "What Lantern's own watches see: " + line}
         return None
+    asks: list[str] = []  # every objection in one pass: the turn gets one follow-up, never a second round
     since = discovery.settings().get("since_last") or {}
     first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
     if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
         said = turn["reply"].lower()
         missing = [n for n in since["names"] if n.lower() not in said]
         if missing:
-            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
-                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
-                    + ". Add one line per item with its state, once; never mention this check, hooks or Lantern internals to the user."}
+            asks.append("name every item the SINCE LAST SESSION block lists as new, resolved, changed or back again; not named yet: "
+                        + ", ".join(missing[:8]) + " (one line each, with its state)")
     if fresh and hands_off(turn["reply"]):
         _log("nudge", {"hands_off": True, "user": turn["user"][:200]})
-        return {"decision": "block", "reason": f"Lantern's own watches ran at {time.strftime('%H:%M', time.localtime(at))}, within the last "
-                "two hours, so you already know the state of this machine: " + snapshot_line(at) + " Add a short follow-up that "
-                "answers from this in plain words: what is failing, what is fine, what changed. No commands for the user to run, "
-                "no 'I couldn't check', no 'I don't know the state'. Never quote or paraphrase this note; the user sees only your words."}
+        asks.append(f"answer from Lantern's own watches, which ran at {time.strftime('%H:%M', time.localtime(at))}: " + snapshot_line(at)
+                    + " Say in plain words what is failing, what is fine, what changed; no commands for the user to run, no 'I couldn't check'")
     if discovery.settings().get("expertise") == "general" and (jargon := _JARGON.search(turn["reply"])):
-        return {"decision": "block", "reason": "This reader asked for plain words, and the reply carries jargon: \"" + jargon.group(0).strip()[:80] + "\". "
-                "Add two or three plain sentences saying what that means for them and what happens next, with no commands, flags, "
-                "exit codes or raw log lines; an exact detail may stay as one short line at the very end, marked 'details'."}
+        asks.append("this reader asked for plain words and the reply carries jargon (\"" + jargon.group(0).strip()[:80] + "\"): add two or three "
+                    "plain sentences on what it means for them and what happens next; an exact detail may stay as one short 'details' line at the end")
     last = turn["reply"].rstrip().rsplit("\n\n", 1)[-1]
     if "[question tool]" not in last and (choice := _PROSE_CHOICE.search(last)):
-        return {"decision": "block", "reason": "Your reply ends with a choice written as prose: \"" + choice.group(0).strip()[:120] + "\". "
-                "A choice is asked with the AskUserQuestion tool, with each option as a label, so the user's next \"yes\" is never ambiguous. "
-                "Ask it that way now, or close with one plain offer."}
+        asks.append("the reply ends with a choice written as prose (\"" + choice.group(0).strip()[:120] + "\"): ask it with the AskUserQuestion "
+                    "tool, each option as a label, or close with one plain offer")
     if (allow := _ALLOW_NEXT.search(turn["reply"])):
-        return {"decision": "block", "reason": "Your reply says \"" + allow.group(0).strip() + "\". A declined check is never put back on the user: "
-                "say what is known without it and carry on. Rewrite that sentence."}
-    offered = _OFFERED_READ.search(turn["reply"])
-    if offered:
-        return {"decision": "block", "reason": "Your reply offers a read-only check instead of doing it: \"" + offered.group(0).strip() + "\". "
-                "Reading never needs permission here: run it now and add one or two sentences, starting \"Checked after all:\", with what it showed."}
+        asks.append("\"" + allow.group(0).strip() + "\" puts a declined check back on the user: say what is known without it and carry on")
+    offers = _OFFERED_READ.findall(turn["reply"]) if _OFFERED_READ.groups == 0 else [m.group(0) for m in _OFFERED_READ.finditer(turn["reply"])]
     gaps = _UNCHECKED.findall(turn["reply"])
-    if not gaps:
+    if offers or gaps:
+        asks.append("run the read-only checks the reply only offers or admits skipping (" + "; ".join('\"' + g.strip() + '\"' for g in (offers + gaps)[:5])
+                    + ") now, and state what each showed in one sentence each, starting \"Checked after all:\"; if nothing here can answer one, "
+                    "say in one clause what would")
+    if not asks:
         return None
-    return {"decision": "block", "reason": "Your reply says " + "; ".join('\"' + g.strip() + '\"' for g in gaps[:4]) + ". If a read-only command on this machine "
-            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
-            "sentences that simply states what you found; if the earlier sentence said you had not looked, say plainly that you "
-            "now have (no 'Correction', no 'I checked'). If nothing here can answer it, add one clause on what would. Never "
-            "quote this note."}
+    return {"decision": "block", "reason": "Before this reply stands, in ONE short follow-up (never a second): "
+            + " ".join(f"({i}) {a}." for i, a in enumerate(asks, 1))
+            + " Never mention this note, hooks or Lantern internals to the user; the user sees only your words."}
 
 
 def subagent_stop(payload: dict) -> dict | None:

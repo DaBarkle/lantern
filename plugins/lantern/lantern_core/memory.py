@@ -206,8 +206,9 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["turns"] += 1
     d["last"] = turn["user"][:400]
     d["reply"] = carry(turn.get("reply", ""), 600)  # the end carries the next steps; hedged sentences are kept whole
-    kept = [l for l in d.get("loops", []) if not addresses(turn.get("reply", ""), l)]  # done, re-asked or retired
-    d["loops"] = list(dict.fromkeys(kept + open_loops(turn.get("reply", ""))))[-LOOPS_KEEP:]
+    reply = turn.get("reply", "")
+    kept = [l for l in d.get("loops", []) if not addresses(reply, l)]  # done, re-asked or retired
+    d["loops"] = list(dict.fromkeys(kept + [l for l in open_loops(reply) if not closed_later(reply, l)]))[-LOOPS_KEEP:]
     with db:
         # cwd stays the folder the session started in: a `cd` mid-session must not make the next session in this folder skip it
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET "
@@ -250,13 +251,22 @@ def open_loops(reply: str, limit: int = 8) -> list[str]:
     return [(m.group(1) or m.group(2) or m.group(3)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
 
 
-_GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before "
+_GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before haven didn "
                      "after right again since while where other first might maybe being doing going would wants want needs need".split())
 
 
 def _content(text: str) -> set[str]:
     """The words a loop is really about: identifiers (paths, units, ports) and longer words that are not filler."""
     return {w for w in terms(text) if any(c in w for c in "./-_0123456789") or (len(w) >= 5 and w not in _GENERIC)}
+
+
+_CLOSED_LATER = re.compile(r"Checked after all|now (?:checked|confirmed|looked|verified)|I've now|I have now", re.I)
+
+
+def closed_later(reply: str, loop: str) -> bool:
+    """A gap stated early in a reply and answered further down the same reply ("Checked after all: ...") is not open."""
+    later = reply[reply.find(loop) + len(loop):] if loop in reply else ""
+    return bool(_CLOSED_LATER.search(later)) and bool(_content(loop) & _content(later))
 
 
 def addresses(reply: str, loop: str) -> bool:
