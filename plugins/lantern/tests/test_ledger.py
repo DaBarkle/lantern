@@ -82,6 +82,23 @@ class LedgerTest(unittest.TestCase):
         write(p, [user("is plex up?"), assistant("Plex is listening on 32400 (ss -ltn).")])
         self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
 
+    def test_a_correction_supersedes_the_note_it_retracts(self):
+        db = memory.connect()
+        old = memory.add(db, "fact", "curate:2026-10-30:1", "podman-auto-update.timer is enabled and runs nightly, so images refresh by themselves")
+        other = memory.add(db, "fact", "curate:2026-10-30:2", "the restic passphrase sits next to the repo it unlocks on Nyx")
+        db.close()
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("what changed?"), assistant("Nothing new.\n\n**Correction:** podman-auto-update.timer isn't enabled; images do not refresh by themselves, that open loop is closed.")])
+        self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
+        db = memory.connect()
+        self.assertEqual(db.execute("SELECT status FROM items WHERE id=?", (old,)).fetchone()[0], "superseded")
+        self.assertEqual(db.execute("SELECT status FROM items WHERE id=?", (other,)).fetchone()[0], "active")
+        facts = memory.rules(db, 4000, kind="fact", dated=True)
+        db.close()
+        self.assertTrue(any("Correction (" in f and "isn't enabled" in f for f in facts), facts)
+        self.assertFalse(any("runs nightly" in f for f in facts))
+        self.assertEqual(memory.corrections("All good. I was wrong earlier: Plex runs as container-plex.service, not plex.service."), ["Plex runs as container-plex.service, not plex.service"])
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()

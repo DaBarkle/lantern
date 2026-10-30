@@ -242,6 +242,29 @@ def previous_session(db: sqlite3.Connection, session: str, cwd: str, now: float 
     return prior or ledger_last(db, session, RESUME_HOURS * 3600, now=now)
 
 
+_CORRECTION = re.compile(r"(?:^|\n|(?<=[.!?] ))\W{0,4}(?:Correction|Retraction|I was wrong|That was wrong|That was incorrect|To correct (?:my|an) earlier)\b\W{0,3}(?:[^:\n]{0,40}:)?[\s*]*([^\n]{12,400})", re.I)
+
+
+def corrections(reply: str) -> list[str]:
+    """What the assistant took back in this reply, so the corrected version is what later sessions see."""
+    return [m.group(1).strip().rstrip(".") for m in _CORRECTION.finditer(reply or "")][:3]
+
+
+def record_corrections(db: sqlite3.Connection, session: str, reply: str, now: float | None = None) -> list[int]:
+    """Store each correction as a dated fact and supersede the earlier notes it overlaps, so a claim retracted on day 2
+    cannot come back as a fact on day 3."""
+    now = now or time.time()
+    ids = []
+    for c in corrections(reply):
+        words = {w for w in terms(c) if len(w) >= 4}
+        for i, text in db.execute("SELECT id, text FROM items WHERE status='active' AND kind IN ('fact', 'pattern') AND source NOT LIKE 'correction:%'").fetchall():
+            old = {w for w in terms(text) if len(w) >= 4}
+            if old and len(words & old) >= max(2, 0.4 * min(len(words), len(old))):
+                supersede(db, i)
+        ids.append(add(db, "fact", f"correction:{session}", f"Correction ({time.strftime('%Y-%m-%d', time.localtime(now))}, supersedes an earlier note): {c}", now))
+    return ids
+
+
 def ledger_get(db: sqlite3.Connection, session: str) -> dict | None:
     row = db.execute("SELECT cwd, started, updated, data FROM ledger WHERE session=?", (session,)).fetchone()
     return {"cwd": row[0], "started": row[1], "updated": row[2], **json.loads(row[3])} if row else None

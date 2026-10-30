@@ -361,6 +361,7 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
     if any(acts):
         text += "\nActions: " + "; ".join(a for a in acts if a)
     memory.add(db, "turn", session, shield.redact(text))
+    memory.record_corrections(db, session, shield.redact(turn["reply"]))
     memory.ledger_update(db, session, cwd, turn)
 
 
