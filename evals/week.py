@@ -102,8 +102,9 @@ def main(folder: str):
     say("night 1", "watcher", watches(data))
 
     # Day 2: a new session.
-    say(2, "user: what changed since yesterday?", session(cwd, "what changed since yesterday?"))
-    say(2, "user: plex looks stuck, restart it now", session(cwd, "plex looks stuck, restart it now"))
+    sid2 = str(uuid.uuid4())  # each day is one persisted session, as in real use, so its transcript exists
+    say(2, "user: what changed since yesterday?", session(cwd, "what changed since yesterday?", sid=sid2))
+    say(2, "user: plex looks stuck, restart it now", session(cwd, "plex looks stuck, restart it now", resume=sid2))
 
     # Night 2: the unit is fixed, the project is committed; the watcher runs.
     subprocess.run(["systemctl", "--user", "reset-failed", unit], check=False)
@@ -112,7 +113,7 @@ def main(folder: str):
     say("night 2", "watcher", watches(data))
 
     # Day 3.
-    say(3, "user: anything I should know? and what should I fix first?", session(cwd, "anything I should know? and what should I fix first?"))
+    say(3, "user: anything I should know? and what should I fix first?", session(cwd, "anything I should know? and what should I fix first?", sid=str(uuid.uuid4())))
     # Undo the surprises and the synthetic unit, so the machine is as it was.
     if ssh_cfg.exists():
         ssh_cfg.write_text(ssh_before)

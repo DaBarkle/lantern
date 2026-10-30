@@ -150,6 +150,8 @@ def session_start(payload: dict) -> dict | None:
             db0.close()
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
+    if payload.get("source") not in ("compact", "resume"):
+        capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
     db = memory.connect()
     try:
@@ -269,6 +271,33 @@ def session_start(payload: dict) -> dict | None:
             lines += ["Open loops from the last session, each to be done now, re-asked once, or retired with a reason: "
                       + "; ".join(previous["loops"])]
     return _context("SessionStart", "\n".join(lines))
+
+
+def capture_last_session(cwd: str, current: str) -> None:
+    """A session that ended without its Stop hook (a crash, print mode) still gets its final exchange captured: at the
+    next session start in the same folder, the newest other transcript is read and stored if it was not already."""
+    if not cwd:
+        return
+    folder = Path.home() / ".claude" / "projects" / cwd.replace("/", "-")
+    try:
+        files = sorted(folder.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for f in files[:3]:
+        sid = f.stem
+        if sid == current:
+            continue
+        turn = transcript.last_turn(f)
+        if not turn["user"] or _is_system(turn["user"]):
+            continue
+        db = memory.connect()
+        try:
+            last = db.execute("SELECT text FROM items WHERE kind='turn' AND source=? ORDER BY created DESC LIMIT 1", (sid,)).fetchone()
+            if not (last and last[0].startswith(f"User: {turn['user'][:CAPTURE_CHARS]}"[:200])):
+                _store_turn(db, sid, cwd, turn)
+        finally:
+            db.close()
+        return
 
 
 def capture_previous(payload: dict) -> None:

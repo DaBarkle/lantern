@@ -485,3 +485,19 @@ class RuleTouchingTest(unittest.TestCase):
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 r = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s2"})
             self.assertIn("Open findings that touch this request", r["hookSpecificOutput"]["additionalContext"])
+
+
+class LastSessionCaptureTest(unittest.TestCase):
+    def test_a_session_that_ended_without_stop_is_captured_at_the_next_start(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(hooks.Path, "home", return_value=Path(d)):
+            cwd = "/work/proj"
+            folder = Path(d) / ".claude" / "projects" / "-work-proj"
+            folder.mkdir(parents=True)
+            write(folder / "old-session.jsonl", [user("fix the timer"), assistant("Done. Next, I can check it fired.")])
+            ctx = hooks.session_start({"session_id": "new-session", "cwd": cwd})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Next, I can check it fired", ctx)  # the open loop made it into the new session
+            hooks.session_start({"session_id": "newer", "cwd": cwd})
+            db = memory.connect()
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn' AND source='old-session'").fetchone()[0], 1)
+            db.close()
