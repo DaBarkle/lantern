@@ -23,11 +23,11 @@ PLAIN = {"ls", "cat", "head", "tail", "wc", "stat", "file", "df", "du", "free", 
          "readlink", "basename", "dirname", "test", "true", "nproc", "lscpu", "lsblk", "mount", "ps", "pgrep", "ip", "flatpak",
          "rpm-ostree", "crontab", "getent", "timedatectl", "journalctl", "loginctl", "systemd-analyze", "cd", "pwd", "lantern",
          "lantern.py", "tree", "column", "paste", "diff", "cmp", "md5sum", "sha256sum", "nl", "tac", "rev", "seq", "printf", "sleep", "done", "fi",
-         "last", "od", "xxd", "hexdump", "strings"}
+         "last", "od", "xxd", "hexdump", "strings", "[", "sensors", "lsusb", "lspci", "uname"}
 SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch", "stash", "ls-files", "describe", "config", "tag", "worktree"},
        "systemctl": {"status", "show", "cat", "list-units", "list-timers", "list-unit-files", "is-active", "is-enabled", "is-failed",
                      "list-dependencies"},
-       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top"},
+       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top", "system"},
        "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"},
        "virsh": {"list", "dominfo", "domstate", "domblklist", "domblkinfo", "dommemstat", "net-list", "pool-list", "vol-list"}}
 CURL_WRITES = {"-X", "--request", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-o", "--output", "-O"}
@@ -44,6 +44,8 @@ def _ok(toks: list[str]) -> bool:
     if toks[0] in ("do", "then", "else"):
         return _ok(toks[1:])
     prog = os.path.basename(toks[0])
+    if prog == "command" and toks[1:2] == ["-v"]:
+        return True  # asks which programs exist
     if prog in WRAPPERS:
         rest = [t for t in toks[1:] if not t.startswith("-") and not re.fullmatch(r"\d+[smh]?", t)]
         return _ok(rest)
@@ -65,8 +67,8 @@ def _ok(toks: list[str]) -> bool:
             return words[1:2] == ["list"]
         if prog == "git" and "config" in words:
             return "--get" in toks or "--list" in toks or "-l" in toks
-        if prog == "podman" and words and words[0] in ("volume", "network"):
-            return len(words) > 1 and words[1] in ("ls", "inspect")
+        if prog == "podman" and words and words[0] in ("volume", "network", "system"):
+            return len(words) > 1 and words[1] in ("ls", "inspect", "df", "info")
         if prog == "systemctl" and not words:
             return True  # `systemctl --user --failed` lists units
         return bool(words) and words[0] in SUB[prog]
@@ -239,6 +241,7 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert not allowed("ls | xargs rm") and not allowed("echo x &> f") and allowed("systemctl --user list-units --all --no-pager 2>/dev/null | grep -i plex")
     assert allowed("for c in a b; do virsh -c $c list --all 2>/dev/null; virsh -c $c domblklist Nyx; done") and not allowed("for f in *; do rm $f; done")
     assert allowed("curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -o out.bin http://x") and allowed("git worktree list") and not allowed("git worktree add x")
+    assert allowed("command -v restic borg rclone") and allowed("podman system df") and not allowed("podman system prune") and allowed("[ -f $ex ] && cat $ex")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b." && \\\n"$L" remember --rule "c"')  # line continuation
     assert allowed("curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -s -o /tmp/x http://localhost:1/")
