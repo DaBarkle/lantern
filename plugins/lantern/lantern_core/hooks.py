@@ -138,6 +138,13 @@ def session_start(payload: dict) -> dict | None:
         discovery.save_settings({**discovery.settings(), "first_session": payload.get("session_id", "?")})
         survey.start()  # the deeper understanding arrives a few minutes in
         discovery.save_settings({**discovery.settings(), "pending": ["purpose", "guardrails", "wider"]})
+        db0 = memory.connect()
+        try:
+            for marker, rule in SEEDED.items():
+                if Path(marker).exists():
+                    memory.add(db0, "rule", "seeded", rule)
+        finally:
+            db0.close()
     elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
         jobs.start(jobs.due(), entry)
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
@@ -394,6 +401,9 @@ def user_prompt_submit(payload: dict) -> dict | None:
 GUARDRAILS = ["Never restart a service or container on this machine without asking first.",
               "Never push or copy folders that look personal (family, finance) off this machine.",
               "Ask before changing the operating system (rpm-ostree, system config, system-wide services)."]
+SEEDED = {  # rules the machine itself implies; stored at the first session so nobody has to say them
+    "/run/ostree-booted": "This is an immutable OS (ostree): never layer packages or edit /usr; use Flatpak, Homebrew or containers.",
+}
 YES = re.compile(r"^\s*(?:ok(?:ay)?|yes|yep|sure|all|all of them|both|go ahead|do it|fine|sounds good)\b[.!]?\s*$", re.I)
 
 
