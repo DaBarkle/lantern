@@ -30,7 +30,7 @@ SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch",
        "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"},
        "virsh": {"list", "dominfo", "domstate", "domblklist", "domblkinfo", "dommemstat", "net-list", "pool-list", "vol-list"}}
 CURL_WRITES = {"-X", "--request", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-o", "--output", "-O"}
-WRAPPERS = {"timeout", "env", "nice", "distrobox-host-exec", "command"}
+WRAPPERS = {"timeout", "env", "nice", "distrobox-host-exec", "command", "xargs"}
 
 
 def _ok(toks: list[str]) -> bool:
@@ -64,21 +64,41 @@ def _ok(toks: list[str]) -> bool:
     return prog in PLAIN
 
 
+def segments(command: str) -> list[list[str]]:
+    """Token lists for each simple command, split on |, ||, &&, ; and newlines with quotes respected (grep -E 'a|b' is one
+    token). Raises ValueError on unbalanced quotes."""
+    out: list[list[str]] = []
+    for line in command.splitlines():
+        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        cur: list[str] = []
+        for tok in lex:
+            if tok in ("|", "||", "&&", ";", ";;"):
+                out.append(cur)
+                cur = []
+            elif tok in ("(", ")"):
+                continue
+            else:
+                cur.append(tok)
+        out.append(cur)
+    return [c for c in out if c]
+
+
 def allowed(command: str) -> bool:
-    """Every part of the command (split on pipes, ;, &&, || and newlines) must be a read-only program or Lantern itself."""
+    """Every simple command must be a read-only program or Lantern itself; no redirections to files, no substitution."""
     if REDIRECT.search(command) or "$(" in command or "`" in command or "<(" in command:
         return False
+    try:
+        parts = segments(re.sub(r"\d?>&\d|\d?>/dev/null|&>/dev/null", " ", command.strip()))  # harmless redirects
+    except ValueError:
+        return False
     names: dict[str, str] = {}
-    for part in SEGMENT.split(command.strip()):
-        part = re.sub(r"\$\{?(\w+)\}?", lambda m: names.get(m.group(1), m.group(0)), part.strip())
-        if not part:
-            continue
-        try:
-            toks = shlex.split(part)
-        except ValueError:
+    for toks in parts:
+        toks = [re.sub(r"\$\{?(\w+)\}?", lambda m: names.get(m.group(1), m.group(0)), t) for t in toks]
+        if any(t in (">", ">>", "&>", ">&") for t in toks):
             return False
         if len(toks) == 1 and (m := re.fullmatch(r"([A-Za-z_]\w*)=(.*)", toks[0], re.S)):
-            names[m.group(1)] = m.group(2)  # NAME=value on its own line, used as "$NAME" below
+            names[m.group(1)] = m.group(2)  # NAME=value on its own, used as "$NAME" later
             continue
         if not _ok(toks):
             return False
@@ -195,6 +215,8 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b"\n"$L" remember --rule "c"') and allowed("git -C ~/x --no-optional-locks log --oneline '@{u}..HEAD' | head")
     assert allowed('git -C "$HOME/Documents/Ch at" status --short 2>&1 | head') and not allowed("git -C ~/x push") and not allowed("git stash")
     assert allowed("curl -s localhost:32400/status/sessions | head -3") and not allowed("curl -X POST localhost:1/x") and allowed("virsh list --all")
+    assert allowed("grep -iH -E 'AutoUpdate|Image=|Restart' ~/.config/containers/systemd/*plex* 2>&1") and allowed("grep -ril plex ~/.config | xargs -r grep -iH -E 'a|b'")
+    assert not allowed("ls | xargs rm") and not allowed("echo x &> f") and allowed("systemctl --user list-units --all --no-pager 2>/dev/null | grep -i plex")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
