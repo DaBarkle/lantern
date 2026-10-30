@@ -1,27 +1,30 @@
 """The packs: each skill is read-first, hands the user no terminal step, references secrets by name, and the guards
-enforce what the skill text promises."""
+enforce what the skill text promises. A pack switches on without an install or a restart: its skill is copied into the
+watched skills folder and its guard runs from the core hook."""
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lantern_core import shield  # noqa: E402
+from lantern_core import discovery, hooks, packs, shield  # noqa: E402
 
-PLUGINS = Path(__file__).resolve().parents[2]
-MARKETPLACE = json.loads((PLUGINS.parent / ".claude-plugin" / "marketplace.json").read_text())
-PACKS = sorted(p for p in PLUGINS.glob("lantern-*") if p.is_dir())
+PLUGIN = Path(__file__).resolve().parents[1]
+PACKS = sorted(p for p in (PLUGIN / "packs").iterdir() if p.is_dir())
 USER_STEP = re.compile(r"(?:ask|tell|have|get) the user to (?:run|type|paste|execute)|the user (?:runs|types|pastes|executes)"
                        r"|run (?:this|the following)|open a terminal|```(?:bash|sh|shell|mermaid)", re.I)
 
 
 def skill(pack: Path) -> tuple[dict, str, dict[str, str]]:
     """Frontmatter, body, and the body's sections keyed by heading."""
-    path = next(pack.glob("skills/*/SKILL.md"))
+    path = pack / "SKILL.md"
     _, front, body = path.read_text().split("---\n", 2)
     meta = dict(line.split(":", 1) for line in front.splitlines() if ":" in line)
     meta = {k.strip(): v.strip() for k, v in meta.items()} | {"skill_dir": path.parent.name}
@@ -45,15 +48,15 @@ def backticked(text: str, prefix: str) -> list[str]:
 
 
 class EveryPackTest(unittest.TestCase):
-    def test_manifest_matches_folder_and_marketplace(self):
-        listed = {p["name"]: p["source"] for p in MARKETPLACE["plugins"]}
+    def test_skill_named_after_its_folder_and_only_the_core_plugin_is_shipped(self):
+        marketplace = json.loads((PLUGIN.parents[1] / ".claude-plugin" / "marketplace.json").read_text())
+        self.assertEqual([p["name"] for p in marketplace["plugins"]], ["lantern"])
+        self.assertEqual(packs.names(), [p.name for p in PACKS])
+        self.assertEqual(set(packs.TRIGGERS.values()), set(packs.names()))
         for pack in PACKS:
             with self.subTest(pack=pack.name):
-                manifest = json.loads((pack / ".claude-plugin" / "plugin.json").read_text())
-                self.assertEqual(manifest["name"], pack.name)
-                self.assertEqual(listed.get(pack.name), f"./plugins/{pack.name}")
                 meta, body, _ = skill(pack)
-                self.assertEqual(meta["name"], meta["skill_dir"])
+                self.assertEqual(meta["name"], f"lantern-{meta['skill_dir']}")
                 self.assertTrue(10 < len(meta["description"]) <= 1024)
                 self.assertRegex(meta["description"], r"Use (?:when|for) ")
 
@@ -85,18 +88,77 @@ class EveryPackTest(unittest.TestCase):
                     self.assertEqual(ref[1], "<value>")
                 self.assertNotRegex(body, r"(?i)(api[_ ]?key|token|password)\s*[:=]\s*[A-Za-z0-9]{12,}")
 
-    def test_guards_are_wired_and_pass_their_self_test(self):
+    def test_guards_declare_a_decision_and_pass_their_self_test(self):
         for pack in [p for p in PACKS if (p / "guard.py").exists()]:
             with self.subTest(pack=pack.name):
-                hook = json.loads((pack / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"][0]
-                self.assertEqual(hook["matcher"], "Bash")
-                self.assertTrue(hook["hooks"][0]["args"][-1].endswith("/guard.py"))
+                self.assertIn(guard(pack).DECISION, ("ask", "deny"))
                 out = subprocess.run([sys.executable, str(pack / "guard.py"), "--self-test"], capture_output=True, text=True)
                 self.assertEqual((out.returncode, out.stdout.strip()), (0, "ok"), out.stderr)
 
 
+def bash(command: str) -> dict:
+    return {"tool_name": "Bash", "tool_input": {"command": command}}
+
+
+class SwitchOnTest(unittest.TestCase):
+    """No install, no restart: on means the skill copy is in the watched folder and the guard answers from the core hook."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": str(Path(self.tmp.name) / "data")})
+        self.skills = mock.patch.object(packs, "skills_dir", lambda: Path(self.tmp.name) / "skills")
+        self.env.start()
+        self.skills.start()
+
+    def tearDown(self):
+        self.skills.stop()
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def copy(self, name):
+        return Path(self.tmp.name) / "skills" / f"lantern-{name}" / "SKILL.md"
+
+    def test_discovery_switches_a_pack_on_and_the_guard_only_then_applies(self):
+        self.assertIsNone(hooks.HANDLERS["pre-tool-use"](bash("docker compose down -v")))  # off: the core hook stays quiet
+        self.assertIsNone(hooks.HANDLERS["pre-tool-use"](bash("sudo tailscale up")))
+        discovery.accept([{"id": "tool:podman", "name": "podman", "kind": "tool", "detail": "/usr/bin/podman", "check": None},
+                          {"id": "tool:git", "name": "git", "kind": "tool", "detail": "/usr/bin/git", "check": None}])
+        self.assertEqual(sorted(packs.active()), ["docker"])
+        self.assertEqual(packs.active()["docker"]["via"], "podman")
+        self.assertEqual(self.copy("docker").read_text(), (PLUGIN / "packs" / "docker" / "SKILL.md").read_text())
+        self.assertFalse(self.copy("tailscale").exists())
+        out = hooks.HANDLERS["pre-tool-use"](bash("docker compose down -v"))["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "ask")
+        self.assertIsNone(hooks.HANDLERS["pre-tool-use"](bash("docker ps -a")))
+        self.assertIsNone(hooks.HANDLERS["pre-tool-use"]({"tool_name": "Write", "tool_input": {"content": "docker rm x"}}))
+
+    def test_user_yes_then_off_and_deny_beats_ask(self):
+        self.assertTrue(packs.activate("tailscale", via="user"))
+        self.assertFalse(packs.activate("tailscale", via="user"))  # already on
+        self.assertFalse(packs.activate("nonsense", via="user"))
+        packs.activate("docker", via="user")
+        out = hooks.HANDLERS["pre-tool-use"](bash("docker rm x; sudo tailscale up"))["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertTrue(packs.deactivate("tailscale"))
+        self.assertFalse(self.copy("tailscale").parent.exists())
+        self.assertFalse(packs.deactivate("tailscale"))
+        self.assertIsNone(hooks.HANDLERS["pre-tool-use"](bash("sudo tailscale up")))
+
+    def test_sync_restores_a_stale_or_missing_copy_and_session_start_names_the_packs(self):
+        packs.activate("unifi", via="user")
+        self.copy("unifi").write_text("old")
+        self.copy("unifi").parent.parent.joinpath("lantern-docker").mkdir()  # a folder without a pack on: left alone
+        self.assertEqual(packs.sync(), ["unifi"])
+        self.assertEqual(packs.sync(), [])
+        from lantern_core import doctor
+        self.assertEqual(doctor.check_packs()[1], "packs on: unifi")
+        ctx = hooks.session_start({"session_id": "s1", "cwd": self.tmp.name})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Packs on for this machine", ctx)
+        self.assertIn("unifi", ctx.split("Packs on for this machine", 1)[1].split("\n")[0])
+
+
 class TailscalePackTest(unittest.TestCase):
-    pack = PLUGINS / "lantern-tailscale"
+    pack = PLUGIN / "packs" / "tailscale"
 
     def test_skill_text_and_guard_agree(self):
         g = guard(self.pack)
@@ -121,7 +183,7 @@ class TailscalePackTest(unittest.TestCase):
 
 
 class DockerPackTest(unittest.TestCase):
-    pack = PLUGINS / "lantern-docker"
+    pack = PLUGIN / "packs" / "docker"
 
     def test_skill_text_and_guard_agree(self):
         g = guard(self.pack)
@@ -150,7 +212,7 @@ class DockerPackTest(unittest.TestCase):
 
 
 class MediaServerPackTest(unittest.TestCase):
-    pack = PLUGINS / "lantern-media-server"
+    pack = PLUGIN / "packs" / "media-server"
 
     def test_pipeline_in_order_and_every_app_has_a_key_source(self):
         meta, body, sections = skill(self.pack)
@@ -167,7 +229,7 @@ class MediaServerPackTest(unittest.TestCase):
 
 
 class HomeAssistantPackTest(unittest.TestCase):
-    pack = PLUGINS / "lantern-home-assistant"
+    pack = PLUGIN / "packs" / "home-assistant"
 
     def test_reads_the_api_and_guards_safety_devices(self):
         _, body, sections = skill(self.pack)
@@ -182,7 +244,7 @@ class HomeAssistantPackTest(unittest.TestCase):
 
 
 class UnifiPackTest(unittest.TestCase):
-    pack = PLUGINS / "lantern-unifi"
+    pack = PLUGIN / "packs" / "unifi"
 
     def test_both_console_kinds_and_connect_order(self):
         _, body, sections = skill(self.pack)

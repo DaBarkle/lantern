@@ -12,7 +12,7 @@ The first release that sets itself up, looks after itself, and knows your machin
 - Doctor: daily self-check and self-repair; resource guard so nothing starts on a machine short of memory.
 - Memory server exits after half an hour idle and comes back on demand.
 - Profiles: a folder's `.lantern.json` keeps its memory apart. The data-folder pointer is per plugin copy.
-- Packs: docker (asks before deleting), media server, Home Assistant, UniFi, Tailscale (read-only, guarded).
+- Packs: docker (asks before deleting), media server, Home Assistant, UniFi, Tailscale (read-only, guarded). They ship inside the core plugin and switch on when discovery finds their system or on `lantern pack on NAME`, in the running session: no install, no restart.
 - Evals: replay on your own transcripts (`evals/replay.py`), faithful simulated week (`evals/week.py`).
 
 ## 0.2.0 (2026-10-30)

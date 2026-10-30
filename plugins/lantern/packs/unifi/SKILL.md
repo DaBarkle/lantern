@@ -1,5 +1,5 @@
 ---
-name: unifi
+name: lantern-unifi
 description: Read UniFi network state (devices, clients, Wi-Fi, firewall, VLANs) and plan changes. Use when the user mentions UniFi, their gateway, access points, Wi-Fi, VLANs or a device that can't connect.
 ---
 # UniFi

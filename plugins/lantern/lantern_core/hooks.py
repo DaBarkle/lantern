@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, alerts, discovery, doctor, insights, jobs, memory, resources, semantic, shield, stage, survey, transcript
+from . import __version__, alerts, discovery, doctor, insights, jobs, memory, packs, resources, semantic, shield, stage, survey, transcript
 from .paths import ensure_data_dir
 
 SYSTEM_EVENTS = ("<task-notification", "<subagent-notification", "<persisted-output", "<system-reminder")
@@ -98,7 +98,7 @@ If a finding from earlier no longer holds in the light of the survey (for exampl
 covers), say so and withdraw it. Report from the commands' own output; never read Lantern's files or database. Never give the user a command
 to run, never suggest packs, never suggest a new session. After any task, end by offering the next useful thing."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
-`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, ssh grant HOST, doctor, status). Ask
+`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, ssh grant HOST, pack on NAME, doctor, status). Ask
 choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
@@ -138,7 +138,9 @@ or a note; to get one, run `"{entry}" secret ask NAME` and show its sentence (ne
 pastes on its own goes to the keychain and the message stops before the model; a password
 manager item is linked with `secret link NAME op://...` (also bw://, pass://, keepass://) and read only when a command
 runs; a host is reached with Lantern's own key after one tap on the phone (`ssh grant HOST`); never install a password
-manager for the user."""
+manager for the user. Packs (docker, media-server, home-assistant, unifi, tailscale) switch on by themselves when their
+system is found and on the user's yes with `pack on NAME`; nothing is installed and no restart is needed, so never
+propose a plugin install or a new session for one."""
 
 
 def session_start(payload: dict) -> dict | None:
@@ -163,6 +165,7 @@ def session_start(payload: dict) -> dict | None:
         doctor.start_server()  # idle servers exit; each session brings one back (a no-op while one is up)
     if payload.get("source") not in ("compact", "resume"):
         capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
+    packs.sync()  # active packs' skills stay current with the plugin, and the skills folder exists for the session's watcher
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
     db = memory.connect()
     try:
@@ -210,6 +213,9 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
         lines += ["Lantern is watching, hourly: failed services, disk running short, uncommitted or unpushed project work, "
                   "and the services it knows (daily). Say 'Lantern is watching ...' only in those words; it is true."]
+    if packs.active():
+        lines += ["Packs on for this machine (their skills are in the listing as /lantern-<pack>; guards enforce what they promise): "
+                  + ", ".join(sorted(packs.active())) + "."]
     for snippet in discovery.readme_snippets():
         lines += [f"In the user's own words (README of a recent project): {snippet}"]
     if discovery.frontier_block():
@@ -572,7 +578,7 @@ def git_state(db, cwd: str) -> None:
 
 
 HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop,
-            "subagent-stop": subagent_stop, "pre-tool-use": shield.pre_tool_use}
+            "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or packs.pre_tool_use(p)}
 
 
 def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:

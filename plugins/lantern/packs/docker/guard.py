@@ -3,6 +3,8 @@ import json
 import re
 import sys
 
+DECISION = "ask"
+
 ENGINE = r"\b(?:docker|podman)(?:-compose)?\b(?:\s+(?:compose|-\S+(?:\s+[^-\s]\S*)?))*\s+"
 DESTROY = re.compile(ENGINE + r"(?:(?:container|image|volume|network|system|buildx)\s+)?(?:rm[if]?|prune|reset)\b"
                      + "|" + ENGINE + r"down\b[^;&|]*(?:\s-v\b|--volumes)")

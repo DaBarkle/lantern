@@ -1,8 +1,0 @@
-{
-  "name": "lantern-unifi",
-  "version": "0.2.0",
-  "description": "Lantern pack: read UniFi network state and stage changes for approval.",
-  "author": { "name": "DaBarkle" },
-  "license": "Apache-2.0",
-  "keywords": ["lantern", "unifi"]
-}

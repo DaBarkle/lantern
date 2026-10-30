@@ -1,5 +1,5 @@
 ---
-name: home-assistant
+name: lantern-home-assistant
 description: Check Home Assistant's health and read or change entities, automations and integrations through its REST API. Use when the user mentions Home Assistant, a smart-home device, automation or scene.
 ---
 # Home Assistant

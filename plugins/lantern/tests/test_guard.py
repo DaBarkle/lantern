@@ -79,7 +79,10 @@ class ShieldTest(unittest.TestCase):
             self.assertEqual(self.call("Bash", command="ls")["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_hook_registered(self):
-        self.assertIs(hooks.HANDLERS["pre-tool-use"], shield.pre_tool_use)
+        canary = "token = " + "ab12" * 6
+        out = hooks.HANDLERS["pre-tool-use"]({"tool_name": "Bash", "tool_input": {"command": f"echo {canary}"}})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("shield", out["hookSpecificOutput"]["permissionDecisionReason"])
 
 
 class DoctorTest(unittest.TestCase):

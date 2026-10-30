@@ -128,8 +128,17 @@ def check_resources():
     return OK, "memory headroom ok" if free is None else f"{free:,} MB free"
 
 
+def check_packs():
+    from . import packs
+    on = sorted(packs.active())
+    if not on:
+        return OK, "no packs on"
+    fixed = packs.sync()
+    return OK, f"packs on: {', '.join(on)}" + (f" (restored the skill of {', '.join(fixed)})" if fixed else "")
+
+
 CHECKS = {"data-dir": check_data_dir, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
-          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "resources": check_resources}
+          "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "resources": check_resources, "packs": check_packs}
 
 
 def run_all() -> list[tuple[str, str, str]]:

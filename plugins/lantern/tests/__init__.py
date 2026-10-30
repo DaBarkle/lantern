@@ -7,7 +7,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tempfile
 
-from lantern_core import discovery, doctor, insights, jobs, paths, survey  # noqa: E402
+from lantern_core import discovery, doctor, insights, jobs, packs, paths, survey  # noqa: E402
 
 _POINTER = Path(tempfile.mkdtemp()) / "data-dir"  # tests must never rewrite the user's own data-dir pointer
 paths.real_pointer = paths._pointer
@@ -24,3 +24,6 @@ survey.real_start = survey.start
 mock.patch.object(survey, "start", lambda *a, **k: False).start()  # nor start a background survey
 insights.real_run = insights.run
 mock.patch.object(insights, "run", lambda db, now=None: []).start()  # nor inspect the real disk and units
+_SKILLS = Path(tempfile.mkdtemp()) / "skills"  # nor write a pack's skill into the user's own ~/.claude/skills
+packs.real_skills_dir = packs.skills_dir
+mock.patch.object(packs, "skills_dir", lambda: _SKILLS).start()

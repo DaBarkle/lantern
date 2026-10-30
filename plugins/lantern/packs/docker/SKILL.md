@@ -1,5 +1,5 @@
 ---
-name: docker
+name: lantern-docker
 description: Check, diagnose and manage Docker or Podman containers on this machine. Use when the user mentions a container, compose file, image, or a service that runs in one.
 ---
 # Containers
