@@ -82,6 +82,14 @@ class LedgerTest(unittest.TestCase):
         write(p, [user("is plex up?"), assistant("Plex is listening on 32400 (ss -ltn).")])
         self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
 
+    def test_past_tense_admissions_and_deferred_looks_are_sent_back(self):
+        for text in ("I haven't checked why the updater failed. I can look at that next.",
+                     "I haven't looked at Plex's own internal logs inside the container yet.",
+                     "Disk is 92% full. If you want, I can take a deeper read-only look at the disk usage."):
+            self.assertTrue(hooks._UNCHECKED.search(text), text)
+        self.assertFalse(hooks._UNCHECKED.search("The updater failed because its repo metadata is stale (journal, read just now)."))
+        self.assertFalse(hooks._UNCHECKED.search("I can restart Plex once you say yes."))  # a write offer is the user's call
+
     def test_a_correction_supersedes_the_note_it_retracts(self):
         db = memory.connect()
         old = memory.add(db, "fact", "curate:2026-10-30:1", "podman-auto-update.timer is enabled and runs nightly, so images refresh by themselves")
@@ -757,9 +765,11 @@ class HandsOffTest(unittest.TestCase):
         hooks.stage.publish(db, "insight/failed/x.service", "insight", "x.service has failed", score=5)
         db.close()
         with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 600}), mock.patch.object(hooks.discovery, "save_settings"):
-            r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "is everything ok with my computer?", "transcript_path": ""})
+            with mock.patch.object(hooks.insights, "run") as run:
+                r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "is everything ok with my computer?", "transcript_path": ""})
             ctx = r["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("You already know the answer to this", ctx)
+            self.assertIn("You already know the answer to this, and it is current", ctx)
+            self.assertTrue(run.called)  # the cheap checks ran again for this question, so no "I haven't looked live" hedge is needed
             self.assertIn("failed: x.service", ctx)
             self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "rename the backup timer", "transcript_path": ""}))
         with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}), mock.patch.object(hooks.discovery, "save_settings"):

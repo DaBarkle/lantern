@@ -502,9 +502,18 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       "applies either way."]
     at = discovery.settings().get("insights_at", 0)
     if HEALTH_ASK.search(prompt) and time.time() - at < SNAPSHOT_FRESH_S:
-        lines += ["You already know the answer to this: " + snapshot_line(at) + " Say it first, in plain words (what is failing, "
-                  "what is fine); a deeper read-only look is optional and, if one is declined, this answer still stands. Never "
-                  "hand the user commands to run."]
+        # The cheap checks run again right now, so the answer is current and the reply never needs an "I haven't looked
+        # live" hedge (which the Stop hook would then contradict with live figures).
+        db = memory.connect()
+        try:
+            insights.run(db)
+        finally:
+            db.close()
+        lines += ["You already know the answer to this, and it is current: failed units, disk and scheduled jobs were re-checked "
+                  f"moments ago ({time.strftime('%H:%M')}); the rest is from the hourly scan. " + snapshot_line(at) + " Say it first, "
+                  "in plain words (what is failing, what is fine), as something you have checked, never as something you have not "
+                  "looked at. A deeper read-only look is optional and, if one is declined, this answer still stands. Never hand "
+                  "the user commands to run."]
     if touching_findings:
         lines += ["Open findings that touch this request (connect them to it):"] + [f"- {f}" for f in touching_findings]
     if touching_frontiers:
@@ -627,8 +636,13 @@ def stop(payload: dict) -> dict | None:
     return None
 
 
+# Admissions in any tense ("I didn't check", "I haven't checked why", "I haven't looked at the logs") and offers to do a
+# read-only look later ("I can look at that next", "If you want, I can take a deeper read-only look"): both are looks that
+# belong in this turn.
 _UNCHECKED = re.compile(r"\bI (?:didn't|did not|couldn't|could not|haven't|have not|was unable to|wasn't able to|have no way to) "
-                        r"(?:check|verify|confirm|look at|look into|read|inspect|see|test)\b[^.\n]{0,160}", re.I)
+                        r"(?:check(?:ed)?|verif(?:y|ied)|confirm(?:ed)?|look(?:ed)? (?:at|into)|read|inspect(?:ed)?|see|seen|test(?:ed)?)\b[^.\n]{0,160}"
+                        r"|\b(?:if you (?:want|like),? )?I can (?:also )?(?:take a (?:deeper |closer |quick )?(?:read-only )?look|look (?:at|into)|check|read|list)"
+                        r"\b[^.\n]{0,120}", re.I)
 # A reply that sends the user off to do Lantern's looking for it: it delegates outright, or it admits it has no
 # state and then lists commands. Each half alone is fine ("I couldn't read the Plex log" with an answer is honest).
 _DELEGATES = re.compile(r"\brun [^.\n]{0,80}\byourself\b|\bso you can (?:approve|run) (?:it|them)\b|\bif you approve(?: it| them)?,? I\b|"
@@ -699,8 +713,9 @@ def stop_nudge(payload: dict) -> dict | None:
         return None
     return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
             "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
-            "sentences that simply states what you found, with no 'I checked', no 'Correction' and no reference to the earlier "
-            "sentence. If nothing here can answer it, add one clause on what would. Never quote this note."}
+            "sentences that simply states what you found; if the earlier sentence said you had not looked, say plainly that you "
+            "now have (no 'Correction', no 'I checked'). If nothing here can answer it, add one clause on what would. Never "
+            "quote this note."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
