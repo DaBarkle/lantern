@@ -189,4 +189,12 @@ class SecretHandoverTest(unittest.TestCase):
             db = memory.connect()
             self.assertIn("PLEX_TOKEN", stage.top(db)[0]["message"])
             db.close()
-            self.assertIsNone(shield.paste("tell me a secret: how does plex work"))
+            self.assertEqual(shield.paste("tell me a secret: how does plex work"), (None, False))
+
+    def test_without_a_keychain_the_secret_is_still_stopped_and_kept_nowhere(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(shield.subprocess, "run", return_value=mock.Mock(returncode=1)):
+            reply = hooks.user_prompt_submit({"prompt": "secret PLEX_TOKEN: abc123XYZtoken", "session_id": "s"})
+        self.assertEqual(reply["decision"], "block")
+        self.assertIn("no keychain", reply["reason"])
+        self.assertNotIn("abc123XYZtoken", json.dumps(reply))

@@ -17,7 +17,7 @@ Thanks for helping. Lantern is small on purpose; please keep it that way.
 plugins/lantern/            the core plugin
   lantern.py                command line and hook entry (uv script, no dependencies)
   serve.py                  memory server (fastembed, numpy)
-  lantern_core/             memory, recall hooks, ledger, curation, stage, shield, doctor, discovery, jobs, approvals
+  lantern_core/             memory, recall hooks, ledger, curation, stage, shield (keychain and manager bridges), doctor, discovery (and frontiers), jobs, approvals, sshkey
   commands/                 /lantern:* commands
   tests/                    unittest, run with uv
 plugins/lantern-*/          packs: skills, optional guards
