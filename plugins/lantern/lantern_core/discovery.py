@@ -65,7 +65,8 @@ def scout_repos(root: Path | None = None, max_depth: int = 3) -> list[dict]:
             return  # a repo's subfolders are part of it
         if depth < max_depth:
             for e in entries:
-                if e.is_dir(follow_symlinks=False) and not e.name.startswith(".") and e.name not in SKIP_DIRS:
+                if e.is_dir(follow_symlinks=False) and not e.name.startswith(".") and e.name not in SKIP_DIRS \
+                        and not any(w in e.name.lower() for w in ("archive", "backup", "old")):  # not live work
                     walk(Path(e.path), depth + 1)
 
     walk(root, 0)

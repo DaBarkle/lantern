@@ -322,3 +322,14 @@ class LogRotationTest(unittest.TestCase):
             self.assertEqual(json.loads(lines[-1])["hits"], [199])
             from lantern_core import status
             self.assertIn("1 note recalled last turn", status.line())
+
+
+class DoctorSummaryTest(unittest.TestCase):
+    def test_healthy_capabilities_fold_into_one_line(self):
+        from lantern_core import discovery
+        finds = [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": "/bin", "check": {"type": "tool", "name": t}} for t in ("sh", "ls")]
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            discovery.accept(finds)
+            names = [n for n, _, _ in doctor.run_all()]
+            self.assertIn("capabilities", names)
+            self.assertFalse(any(n.startswith("cap:") for n in names))

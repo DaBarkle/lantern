@@ -133,6 +133,10 @@ def run_all() -> list[tuple[str, str, str]]:
         except Exception as e:  # a broken check is itself a finding
             status, msg = FAIL, f"check crashed: {e}"
         results.append((name, status, msg))
+    # One line for the capabilities that are fine; only a missing one deserves its own.
+    fine = [r for r in results if r[0].startswith("cap:") and r[1] == OK]
+    if len(fine) > 1:
+        results = [r for r in results if r not in fine] + [("capabilities", OK, f"{len(fine)} known capabilities are up")]
     db = memory.connect()
     try:
         for name, status, msg in results:
@@ -141,6 +145,8 @@ def run_all() -> list[tuple[str, str, str]]:
             else:
                 stage.publish(db, f"doctor/{name}", "doctor", msg, score=8 if status == FAIL else 5, days=2)
         stage.resolve_source(db, "doctor", {f"doctor/{n}" for n, s, _ in results if s != OK})
+        for name in fine:  # folded into one line above, so clear any old finding of theirs too
+            stage.resolve(db, f"doctor/{name[0]}")
     finally:
         db.close()
     return results

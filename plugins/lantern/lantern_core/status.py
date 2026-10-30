@@ -25,7 +25,9 @@ def line(now: float | None = None) -> str:
     try:
         total = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind != 'turn'").fetchone()[0]
         learned = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind IN ('rule','fact','pattern','profile') "
-                             "AND created > ?", (now - 86400,)).fetchone()[0]
+                             "AND source NOT LIKE 'discovery:%' AND created > ?", (now - 86400,)).fetchone()[0]
+        found = db.execute("SELECT count(*) FROM items WHERE status='active' AND source LIKE 'discovery:%' AND created > ?",
+                           (now - 86400,)).fetchone()[0]
         findings = [e for e in stage.top(db, k=3, now=now) if e["salience"] >= 4]
     finally:
         db.close()
@@ -37,6 +39,8 @@ def line(now: float | None = None) -> str:
     parts.append(f"{total:,} things known")
     if learned:
         parts.append(f"learned {learned} today")
+    if found:
+        parts.append(f"found {found} new on this machine")
     if findings:
         parts.append("needs you: " + findings[0]["message"][:80])
     else:
