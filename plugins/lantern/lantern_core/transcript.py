@@ -1,5 +1,6 @@
 """Read the user and assistant text, and what tools did, out of a Claude Code transcript (JSONL)."""
 import json
+import re
 from pathlib import Path
 
 TAIL_BYTES = 4_000_000  # a long session's transcript runs to hundreds of MB; the last turns are all a hook needs
@@ -77,6 +78,24 @@ def last_turn(path: str | Path) -> dict:
     for k in ("files", "commands", "agents"):
         turn[k] = list(dict.fromkeys(turn[k]))  # each once, in order
     return turn
+
+
+_ANSWER = re.compile(r'"((?:[^"\\]|\\.){8,400}?)"="((?:[^"\\]|\\.){1,400}?)"')
+
+
+def answers(path: str | Path) -> list[tuple[str, str]]:
+    """Every (question, answer) pair the user gave through the question tool, in order, read from the tool results."""
+    out = []
+    for e in _entries(path):
+        content = e.get("message", {}).get("content")
+        if e["type"] != "user" or not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                text = _text(b.get("content")) if not isinstance(b.get("content"), str) else b["content"]
+                if "answered" in text:
+                    out += [(q, a) for q, a in _ANSWER.findall(text)]
+    return out
 
 
 def last_exchange(path: str | Path) -> tuple[str, str]:

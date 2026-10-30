@@ -207,7 +207,7 @@ def _why_resolved(key: str) -> str:
         remote = _git(rest, "remote")
         dirty = max(0, len(status) - 1)
         head = _git(rest, "log", "-1", "--format=%h %cs")
-        return (f"{Path(rest).name}: now {'clean' if not dirty else f'{dirty} uncommitted'} (last commit {head or 'none'}), "
+        return (f"{Path(rest).name} ({rest.replace(str(Path.home()), '~')}): now {'clean' if not dirty else f'{dirty} uncommitted'} (last commit {head or 'none'}), "
                 f"{'has a remote' if remote else 'still no remote, so still unbacked unless a backup job covers it'}"
                 + (", nothing unpushed" if status and "ahead" not in status[0] else ""))
     if kind in ("failed", "failed-system"):
@@ -244,8 +244,16 @@ def _subject(key: str) -> str:
     return key.removeprefix("insight/").partition("/")[2]
 
 
+_KIND_WORDS = {"repo-risk": "uncommitted or unpushed work in", "repo-noremote": "no git remote for", "repo-stale": "no recent commit in",
+               "failed": "failed unit", "failed-system": "failed system unit", "down": "not running:", "disk": "disk nearly full on",
+               "backup": "backup job problem:", "backup-ok": "backup fine:", "secret-in-unit": "a secret written in unit file"}
+
+
 def _name(key: str) -> str:
-    return key.removeprefix("insight/").replace("/", " ", 1).replace(str(Path.home()), "~")
+    """A finding named in words ("failed unit x.service"), never by its internal key."""
+    kind, _, rest = key.removeprefix("insight/").partition("/")
+    rest = rest.split(":", 1)[-1] if kind == "down" else rest
+    return f"{_KIND_WORDS.get(kind, kind)} {rest.replace(str(Path.home()), '~')}".strip()
 
 
 def diff_since_last(found_keys: set[str], db=None) -> str:
@@ -283,13 +291,13 @@ def diff_since_last(found_keys: set[str], db=None) -> str:
     at = s.get("insights_at")
     line = "Since the last session: " + ", ".join(counts) + (f" (watches last ran at {time.strftime('%H:%M', time.localtime(at))})." if at else ".")
     if back:
-        line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back[:6]) + "."
+        line += " Back again (cleared since last session, present again now): " + "; ".join(_why_resolved(k) for k in back) + "."
     if new:
-        line += " New: " + "; ".join(_name(k) for k in new[:6]) + "."
+        line += " New: " + "; ".join(_name(k) for k in new) + "."  # every one: the count and the list must agree
     if changed:
-        line += " Changed: " + "; ".join(_why_resolved(k) for k in changed[:6]) + "."
+        line += " Changed: " + "; ".join(_why_resolved(k) for k in changed) + "."
     if resolved:
-        line += " Resolved: " + "; ".join(_why_resolved(k) for k in resolved[:6]) + "."
+        line += " Resolved: " + "; ".join(_why_resolved(k) for k in resolved) + "."
     return line
 
 

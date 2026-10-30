@@ -1,4 +1,5 @@
 """Claude Code hook entry points. Each reads the event JSON on stdin and may print a JSON reply."""
+import hashlib
 import json
 import math
 import os
@@ -90,7 +91,8 @@ background survey still runs and reports later. Your first reply, in this order,
    and `remember --rule "<text>"`; for phone approvals run `approve setup` and show the two steps for the ntfy app.
 6. Look wider in this same reply, read-only, without asking: run `depth 3` (containers, VMs, services, apps, SSH hosts,
    local servers), show the new finds from the command's output as a table, and say in one line that "look less"
-   narrows it. Reading never needs permission; only a change to the machine does.
+   narrows it. Reading never needs permission; only a change to the machine does. The command is yours to run, never
+   shown to the user; they see only what was found.
 Lantern's own commands above run in exactly this shape, one per Bash call, nothing before or after it:
 `uv run --no-project --quiet "{entry}" remember --rule "<text>"` (same for remember --profile, approve setup, depth 3,
 secret ask NAME, forget). Never put the path in a variable, never chain two with && or ;, never wrap it: the user sees
@@ -310,7 +312,8 @@ def session_start(payload: dict) -> dict | None:
         lines += [f"Rules already stored by Lantern: {stored} (listed above as the user's standing rules; nothing is pending a save). "
                   "A finding's journal lines above were read by Lantern's watcher: cite them as the cause; never say the log is unread."]
         if previous and previous.get("loops"):
-            lines += ["Left unfinished last session (do each now, ask again once, or drop it with a reason; never say 'open loop' to the user): "
+            lines += ["Left unfinished last session (name each one in this reply: done now, asked again once, or dropped with a reason; "
+                      "never say 'open loop' to the user): "
                       + "; ".join(previous["loops"])]
     return _context("SessionStart", "\n".join(lines))
 
@@ -378,6 +381,10 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
 
 
 _REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
+
+
+_WHAT_CHANGED = re.compile(r"what(?:'s| is| has)? (?:changed|new|happened)|since (?:yesterday|last time|last session|I was (?:away|gone))|"
+                           r"anything (?:new|I should know|to report)|how (?:is|are) (?:things|everything|the machine|my (?:computer|machine))", re.I)
 
 
 def user_prompt_submit(payload: dict) -> dict | None:
@@ -480,6 +487,11 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines.append("Also possibly relevant:")
             lines += [f"- [{time.strftime('%Y-%m-%d', time.localtime(h['created']))}] {h['text'].strip().splitlines()[0][:160]}"
                       for h in titles]
+    if _WHAT_CHANGED.search(prompt):
+        lines += ["This asks what changed: the answer is the SINCE LAST SESSION block in your session context (its counts, the new, "
+                  "changed, back-again and resolved items with their reasons, what was found on this machine, where the last session "
+                  "left off and what was left unfinished) plus the watches line. File timestamps in this folder are not the answer; "
+                  "use them only to add detail to an item already in that block. Name each unfinished item: done, asked again, or dropped with a reason."]
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
         lines += ["A rule reaches exactly what it names: one about X says nothing about Y, so if this request is outside the "
@@ -544,8 +556,8 @@ def setup_answer(prompt: str) -> str | None:
         return None
     db = memory.connect()
     try:
-        for rule in GUARDRAILS:
-            memory.add(db, "rule", "setup", rule)
+        for i, rule in enumerate(GUARDRAILS):
+            memory.add(db, "rule", f"setup:{i}", rule)  # one source per rule: the index lists one item per source
     finally:
         db.close()
     s["pending"] = ["purpose"]  # a bare yes covers the guardrails and the wider look, not who the user is
@@ -572,6 +584,36 @@ def note_correction(db, session: str, prompt: str) -> int | None:
     return memory.add(db, "rule", f"said:{session}", text)
 
 
+def record_answers(db, path: str) -> None:
+    """What the user answered through the question tool is Lantern's to keep: the machine's purpose becomes the profile,
+    chosen guardrails become rules, and the setup stops being pending, whether or not the model ran a command for it."""
+    s = discovery.settings()
+    seen = set(s.get("answers_seen") or [])
+    pending = s.get("pending") or []
+    changed = False
+    for q, a in transcript.answers(path):
+        mark = hashlib.sha1(f"{q}={a}".encode()).hexdigest()[:12]
+        if mark in seen:
+            continue
+        seen.add(mark)
+        changed = True
+        ql = q.lower()
+        if "guardrail" in ql or "rule" in ql:
+            for i, rule in enumerate(re.split(r"(?<=\.)\s*,\s*|\s*;\s*", a)):
+                if 12 <= len(rule.strip()) <= 300 and rule.strip() not in memory.rules(db, 20000):
+                    memory.add(db, "rule", f"setup:{mark}:{i}", rule.strip())  # one source per rule: the index lists one per source
+            pending = [x for x in pending if x != "guardrails"]
+        elif re.search(r"machine|computer|this box|is for|used for", ql) and not memory.profile(db, 4000):
+            guess = re.split(r"\.?\s*(?:Is (?:that|this) (?:right|correct)|Right\?|Correct\?)", q)[0]
+            guess = re.sub(r"^.*?(?:my guess is|looks like it's|looks like|it seems)\s*(?:that\s*)?", "", guess, flags=re.I).strip()
+            if re.match(r"(?i)yes|that's (?:it|right)|correct|mostly", a) and len(guess) >= 12:
+                memory.add(db, "profile", "setup", guess[0].upper() + guess[1:])
+            pending = [x for x in pending if x != "purpose"]
+    if changed:
+        discovery.save_settings({**discovery.settings(), "answers_seen": sorted(seen)[-200:], "pending": pending,
+                                 **({"answered_at": time.time()} if pending != (s.get("pending") or []) else {})})
+
+
 def stop(payload: dict) -> dict | None:
     turn = transcript.last_turn(payload.get("transcript_path", ""))
     if not turn["user"] or _is_system(turn["user"]):
@@ -579,6 +621,7 @@ def stop(payload: dict) -> dict | None:
     db = memory.connect()
     try:
         _store_turn(db, payload.get("session_id", "?"), payload.get("cwd") or "", turn)
+        record_answers(db, payload.get("transcript_path", ""))
     finally:
         db.close()
     return None
@@ -594,6 +637,8 @@ _DELEGATES = re.compile(r"\brun [^.\n]{0,80}\byourself\b|\bso you can (?:approve
 _NO_STATE = re.compile(r"\bI (?:don't|do not) know (?:the state|whether|if|how)\b|\bI (?:\w+ )?(?:couldn't|could not|can't|cannot|wasn't able to|"
                        r"was unable to) (?:check|run|see|tell|verify|confirm)\b|\b(?:was|were|got) (?:blocked|declined|denied)\b", re.I)
 _CMD_LINE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+`[^`]{2,}`", re.M)
+_OFFERED_READ = re.compile(r"\b(?:Should I|Shall I|Want me to|Do you want me to|Say the word and I'll) (?:run|check|read|look|inspect|verify|scan|list|pull)\b"
+                           r"(?![^?\n]*\b(?:restart|stop|kill|delete|remove|prune|push|install|change|edit|write|enable|disable)\b)[^?\n]{0,140}\?", re.I)
 SNAPSHOT_FRESH_S = 2 * 3600
 HEALTH_ASK = re.compile(r"\b(?:everything|all|things|anything) (?:ok|okay|fine|good|alright|wrong|broken)\b|\bhow(?:'s| is) (?:my|the) "
                         r"(?:machine|computer|system|server|pc|box)\b|\b(?:machine|computer|system|server|pc) (?:ok|okay|fine|healthy|alright)\b"
@@ -645,6 +690,10 @@ def stop_nudge(payload: dict) -> dict | None:
                 "two hours, so you already know the state of this machine: " + snapshot_line(at) + " Add a short follow-up that "
                 "answers from this in plain words: what is failing, what is fine, what changed. No commands for the user to run, "
                 "no 'I couldn't check', no 'I don't know the state'. Never quote or paraphrase this note; the user sees only your words."}
+    offered = _OFFERED_READ.search(turn["reply"])
+    if offered:
+        return {"decision": "block", "reason": "Your reply offers a read-only check instead of doing it: \"" + offered.group(0).strip() + "\". "
+                "Reading never needs permission here: run it now and add one or two sentences, starting \"Checked after all:\", with what it showed."}
     gaps = _UNCHECKED.findall(turn["reply"])
     if not gaps:
         return None
@@ -667,6 +716,37 @@ def subagent_stop(payload: dict) -> dict | None:
     finally:
         db.close()
     return None
+
+
+_DISRUPT = re.compile(r"\b(?:systemctl(?:\s+--user)?\s+(?:restart|stop|kill|disable)|(?:podman|docker)\s+(?:restart|stop|kill|rm)|flatpak\s+kill)\s+(?:-\S+\s+)*([^\s;&|]+)")
+
+
+def rule_guard(payload: dict) -> dict | None:
+    """A restart, stop or kill of something a stored rule names asks the user first, in code, unless this turn already
+    quoted the rule to them: "restart it now" is a go-ahead only once the rule and its reason have been said."""
+    if payload.get("tool_name") != "Bash":
+        return None
+    m = _DISRUPT.search((payload.get("tool_input") or {}).get("command", ""))
+    if not m:
+        return None
+    stem = re.sub(r"\.(?:service|timer|container|socket)$", "", Path(m.group(1).strip("'\"")).name).lower()
+    words = {w for w in re.split(r"[^a-z0-9]+", stem) if len(w) >= 3} - {"container", "service", "user", "app"}
+    if not words:
+        return None
+    db = memory.connect()
+    try:
+        rules = memory.rules(db, 20000)
+    finally:
+        db.close()
+    hit = next((r for r in rules if any(w in r.lower() for w in words)), None)
+    if not hit:
+        return None
+    said = transcript.last_turn(payload.get("transcript_path", ""))["reply"].lower()
+    if "your rule" in said or hit[:40].lower() in said:
+        return None  # quoted in this turn; the user's go-ahead stands
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+            "permissionDecisionReason": f'Your rule: "{hit}". Quote it to the user with the reason it protects and what you checked, '
+                                        "and run this only on their go-ahead."}}
 
 
 def new_big_files(db, cwd: str, now: float | None = None) -> None:
@@ -712,7 +792,7 @@ def git_state(db, cwd: str) -> None:
 
 
 HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop, "stop-nudge": stop_nudge,
-            "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or packs.pre_tool_use(p),
+            "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or rule_guard(p) or packs.pre_tool_use(p),
             "signal": statusline.signal}
 
 

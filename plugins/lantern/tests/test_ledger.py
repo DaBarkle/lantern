@@ -154,6 +154,61 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(memory.previous_session(db, "d3", "/proj")["goal"], "what changed")  # day 3 resumes from day 2, not an older session
         db.close()
 
+    def test_what_changed_points_at_the_computed_block(self):
+        with mock.patch.object(hooks.semantic, "search", return_value=None):
+            ctx = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("SINCE LAST SESSION block", ctx)
+            self.assertIn("File timestamps in this folder are not the answer", ctx)
+            r = hooks.user_prompt_submit({"prompt": "add a nightly timer", "session_id": "s1"})
+        self.assertNotIn("File timestamps", (r or {}).get("hookSpecificOutput", {}).get("additionalContext", ""))
+
+    def test_a_restart_of_something_a_rule_names_asks_first(self):
+        db = memory.connect()
+        memory.add(db, "rule", "said:s0", "from now on, never restart Plex without asking me first, it breaks my parents' stream")
+        db.close()
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("plex looks stuck, restart it now"), assistant("On it.")])
+        call = lambda cmd: hooks.rule_guard({"tool_name": "Bash", "tool_input": {"command": cmd}, "transcript_path": str(p)})
+        out = call("systemctl --user restart container-plex.service")
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("never restart Plex", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIsNone(call("systemctl --user restart sonarr.service"))  # no rule names it
+        self.assertIsNone(call("systemctl --user status container-plex.service"))  # reading is free
+        write(p, [user("plex looks stuck, restart it now"), assistant('Your rule: "from now on, never restart Plex without asking me first, it breaks my parents\' stream". Nobody is streaming; restarting now as you asked.')])
+        self.assertIsNone(call("systemctl --user restart container-plex.service"))  # quoted this turn: the go-ahead stands
+        self.assertEqual(memory.open_loops("Say which of these duties to take on. The most useful next step is a local backup."),
+                         ["Say which of these duties to take on", "The most useful next step is a local backup"])
+
+    def test_question_tool_answers_are_kept_by_lantern(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        result = ('The user answered: "From what\'s on bazzite, my guess is this machine is for gaming plus building AI agent tooling. Is that right?"='
+                  '"Yes, that\'s right", "Which guardrails should Lantern hold on this machine?"="Never restart a service without asking first., '
+                  'Never push personal folders off this machine.". Read the answers carefully.')
+        lines = [user("hello"),
+                 {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {"questions": []}}]}},
+                 {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": result}]}},
+                 assistant("Saved.")]
+        p.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        with mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
+            Path(self.tmp.name, "settings.json").write_text(json.dumps({"pending": ["purpose", "guardrails", "wider"]}))
+            self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})
+            self.call("stop", {"session_id": "s1", "transcript_path": str(p), "cwd": "/proj"})  # twice: recorded once
+            self.assertEqual(hooks.discovery.settings()["pending"], ["wider"])
+        db = memory.connect()
+        self.assertEqual(memory.profile(db, 1000), "This machine is for gaming plus building AI agent tooling")
+        self.assertEqual(sorted(r for r in memory.rules(db, 4000) if "." in r), ["Never push personal folders off this machine.", "Never restart a service without asking first."])
+        db.close()
+
+    def test_an_offered_read_only_check_is_run_instead(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is the drive ok?"), assistant("Probably. Should I run the read-only drive health check?")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={}):
+            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertIn("offers a read-only check instead of doing it", out["reason"])
+        write(p, [user("plex is stuck"), assistant("Should I run the restart now?")])
+        with mock.patch.object(hooks.discovery, "settings", return_value={}):
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a change is asked about, rightly
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
@@ -462,11 +517,12 @@ class InsightsTest(unittest.TestCase):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
             self.assertIn("1 finding resolved, 0 new, 1 unchanged", line)
             self.assertNotIn("finding(s)", line)
-            self.assertIn("Resolved: dirty: now clean (last commit", line)  # a vanished finding is explained, never dropped
+            self.assertIn("Resolved: dirty (", line)  # a vanished finding is explained, never dropped
+            self.assertIn("): now clean (last commit", line)
             self.assertIn("still no remote", line)
             line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
             self.assertIn("0 findings resolved, 1 new, 1 unchanged", line)
-            self.assertIn("New: failed x.service", line)
+            self.assertIn("New: failed unit x.service", line)  # kinds in words, never the internal key
             with mock.patch.object(insights.discovery, "_run", return_value=""):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/backup/x.service"})
             self.assertIn("0 findings resolved, 0 new, 1 changed, 1 unchanged", line)  # same subject, new kind: changed, not resolved plus new
