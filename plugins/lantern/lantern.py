@@ -46,6 +46,16 @@ def stage_cli(argv: list[str]) -> int:
     return 2
 
 
+def settle_setup(item: str) -> None:
+    """A setup question answered through the question tool (profile stored, rule stored, depth raised) stops being pending,
+    exactly as a bare "ok" in chat does; otherwise every later session re-asks it."""
+    s = discovery.settings()
+    if item and item in (s.get("pending") or []):
+        s["pending"] = [p for p in s["pending"] if p != item]
+        s["answered_at"] = time.time()
+        discovery.save_settings(s)
+
+
 def memory_cli(argv: list[str]) -> int:
     db = memory.connect()
     try:
@@ -56,6 +66,7 @@ def memory_cli(argv: list[str]) -> int:
                 print("that looks like a secret; Lantern will not store it (use `lantern secret set`)", file=sys.stderr)
                 return 1
             memory.add(db, kind, "manual", text)
+            settle_setup({"profile": "purpose", "rule": "guardrails"}.get(kind, ""))
             print(f"remembered ({kind})")
             return 0
         if argv[:2] == ["forget", "--id"] and len(argv) == 3:
@@ -101,6 +112,8 @@ def main(argv: list[str]) -> int:
         from lantern_core import sshkey
         return sshkey.cli(argv[1:])
     if argv[:1] in (["depth"], ["discover"]):
+        if argv[:2] in (["depth", "3"], ["depth", "4"]):
+            settle_setup("wider")
         return discovery.cli(argv if argv[0] == "depth" else argv[1:])
     if argv == ["job", "curate"]:
         from lantern_core import jobs
