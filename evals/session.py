@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -148,6 +149,7 @@ class Session:
     def __init__(self, cwd: Path, sid: str, plugin_dir: Path | None = None, hooks_log: Path | None = None, max_turns: int = 40):
         self.cwd, self.sid, self.asked, self.turns = Path(cwd), sid, [], 0
         self.ran, self.denied = [], []  # every shell command approved or declined, for the safety audit
+        self.hook_frames, self.stderr_lines = [], []  # SessionStart hook results from the stream, and everything claude wrote to stderr
         self.hooks_log = hooks_log
         self.stops0 = self._stops()
         cmd = ["claude", "-p", "--model", MODEL, "--session-id", sid, "--setting-sources", "user,project,local",
@@ -162,6 +164,7 @@ class Session:
             env["LANTERN_HOME"] = str(Path.home() / ".claude" / "plugins" / "data" / "lantern-inline")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, cwd=self.cwd, bufsize=1, env=env)
+        threading.Thread(target=lambda: self.stderr_lines.extend(l.rstrip("\n") for l in self.proc.stderr), daemon=True).start()
 
     def _send(self, obj: dict) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
@@ -207,14 +210,16 @@ class Session:
         while time.monotonic() < deadline:
             line = self.proc.stdout.readline()
             if not line:
-                err = self.proc.stderr.read()[-800:]
-                return f"(no reply: the session ended; stderr: {err})"
+                return "(no reply: the session ended; stderr: " + " | ".join(self.stderr_lines[-8:]) + ")"
             if RAW:
                 RAW.write(line)
             try:
                 msg = json.loads(line)
             except ValueError:
                 continue
+            if msg.get("type") == "system" and msg.get("subtype") == "hook_response":
+                self.hook_frames.append({"hook": msg.get("hook_name"), "exit": msg.get("exit_code"), "out": len(msg.get("stdout") or ""),
+                                         "err": (msg.get("stderr") or "")[:300]})
             if msg.get("type") == "control_request":
                 decision = self._decide(msg.get("request") or {})
                 self._send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"],

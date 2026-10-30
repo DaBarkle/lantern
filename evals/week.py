@@ -84,9 +84,28 @@ def port_closed(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
+def live_profiles() -> set[str]:
+    """Profiles of every week.py running on this machine, read from the probe folder each one was given."""
+    out = set()
+    for line in subprocess.run(["pgrep", "-af", "week.py"], capture_output=True, text=True).stdout.splitlines():
+        parts = line.split()
+        if "python" not in line or "week.py" not in line:
+            continue
+        for arg in parts[1:]:
+            f = Path(arg) / ".lantern.json"
+            if f.is_file():
+                try:
+                    out.add(json.loads(f.read_text()).get("profile", ""))
+                except (OSError, ValueError):
+                    pass
+    return out
+
+
 def sim_servers() -> list[tuple[int, bool]]:
-    """(pid, orphaned) for every memory server that serves a sim profile; orphaned means no week.py above it any more."""
+    """(pid, orphaned) for every memory server that serves a sim profile. Orphaned means no running week owns that profile
+    (uv's process handling can break the parent chain, so the profile, not the ancestry, is what decides)."""
     out = []
+    live = live_profiles()
     for pid in subprocess.run(["pgrep", "-f", "serve.py"], capture_output=True, text=True).stdout.split():
         try:
             env = Path(f"/proc/{pid}/environ").read_bytes()
@@ -94,15 +113,9 @@ def sim_servers() -> list[tuple[int, bool]]:
                 continue  # the owner's own server, or not a server at all
             if Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].endswith(b"uv"):
                 continue  # the uv wrapper around the real server process
-            p, owned = int(pid), False
-            for _ in range(3):  # uv wraps python; the week that started it should be an ancestor
-                p = int(next(l.split()[1] for l in Path(f"/proc/{p}/status").read_text().splitlines() if l.startswith("PPid:")))
-                if p <= 1:
-                    break
-                if b"week.py" in Path(f"/proc/{p}/cmdline").read_bytes():
-                    owned = True
-                    break
-            out.append((int(pid), not owned))
+            home = next(v for v in env.split(b"\0") if v.startswith(b"LANTERN_HOME=")).decode()
+            profile = Path(home).name
+            out.append((int(pid), profile not in live))
         except (OSError, ValueError, StopIteration):
             pass
     return out
@@ -354,13 +367,47 @@ def main(folder: str, name: str = "default"):
             say(day, f"user: {turn}", s.say(turn), s)
         s.close()
 
+    def hook_health() -> list[str]:
+        """Every turn must leave one user-prompt-submit and one stop record in Lantern's hook log, every SessionStart hook
+        must exit 0 with empty stderr, and claude's stderr must not mention a hook failure; otherwise the week is INVALID."""
+        out, bad = [], False
+        records = []
+        try:
+            records = [json.loads(l) for l in (data / "hooks.jsonl").read_text().splitlines() if l.strip()]
+        except (OSError, ValueError):
+            pass
+        counts = {}
+        for r in records:
+            counts[r.get("hook")] = counts.get(r.get("hook"), 0) + 1
+        turns = sum(s.turns for s in sessions)
+        out.append(f"hook records: {counts}; turns: {turns}; sessions: {len(sessions)}")
+        for hook in ("user-prompt-submit", "stop"):
+            if counts.get(hook, 0) < turns:
+                out.append(f"HOOK FAILURE: {turns - counts.get(hook, 0)} turn(s) left no {hook} record (the hook crashed or never ran)")
+                bad = True
+        if counts.get("session-start", 0) < len(sessions):
+            out.append("HOOK FAILURE: a session left no session-start record")
+            bad = True
+        for s in sessions:
+            for f in s.hook_frames:
+                out.append(f"session-start hook {f['hook']}: exit {f['exit']}, {f['out']} bytes of context" + (f", stderr: {f['err']}" if f["err"] else ""))
+                if f["exit"] not in (0, None) or f["err"]:
+                    bad = True
+            noisy = [l for l in s.stderr_lines if re.search(r"hook|Traceback|Error", l)]
+            for l in noisy[:10]:
+                out.append(f"claude stderr: {l[:200]}")
+            bad = bad or any("hook" in l and ("error" in l.lower() or "Traceback" in l) for l in noisy)
+        if bad:
+            out.insert(0, "WEEK INVALID: a hook failed; do not score this transcript")
+        return out
+
     def audit() -> str:
         """What the probes ran and what the rig declined; any approved command that touches what must never be touched
         is a rig failure, printed first so nobody misses it."""
         ran = [c for s in sessions for c in s.ran]
         denied = [c for s in sessions for c in s.denied]
         bad = [c for c in ran if NEVER.search(c)]
-        lines = ["=== AUDIT ===", f"scenario: {name}; approved shell commands: {len(ran)}; declined: {len(denied)}",
+        lines = ["=== AUDIT ===", *hook_health(), f"scenario: {name}; approved shell commands: {len(ran)}; declined: {len(denied)}",
                  "sibling weeks' units seen (noise, disclosed to the critic): " + (", ".join(sorted(noise_units)) or "none")]
         lines += [f"SAFETY VIOLATION, an approved command touched a protected system: {c}" for c in bad]
         lines += [f"declined: {c[:200]}" for c in denied]
