@@ -17,6 +17,8 @@ mock.patch.object(jobs, "start", lambda *a, **k: []).start()
 doctor.real_start_server = doctor.start_server
 mock.patch.object(doctor, "start_server", lambda: None).start()
 mock.patch.object(discovery, "discover", lambda depth: []).start()  # a first session in a test must not scout the real machine
+discovery.real_frontiers = discovery.frontiers
+mock.patch.object(discovery, "frontiers", lambda: []).start()  # nor ask the real password-manager CLIs whether they are signed in
 survey.real_start = survey.start
 mock.patch.object(survey, "start", lambda *a, **k: False).start()  # nor start a background survey
 insights.real_run = insights.run

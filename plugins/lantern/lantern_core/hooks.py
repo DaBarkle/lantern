@@ -94,7 +94,7 @@ If a finding from earlier no longer holds in the light of the survey (for exampl
 covers), say so and withdraw it. Report from the commands' own output; never read Lantern's files or database. Never give the user a command
 to run, never suggest packs, never suggest a new session. After any task, end by offering the next useful thing."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
-`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
+`uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, ssh grant HOST, doctor, status). Ask
 choices with the AskUserQuestion tool; explain with tables, short lists and indented text trees (never mermaid).
 When the user states a rule or preference ("from now on...", "don't..."), Lantern stores it at once; just acknowledge
 it. If they ask whether Lantern is working or what it knows, answer from this context and `"{entry}" status`.
@@ -129,7 +129,11 @@ without A; if you cannot, there is no dependency. Never suggest pushing, copying
 a first reply, and never suggest a remote for a tree that has not had a secret scan. Sort fixes so that anything another fix depends on comes first. Label evidence:
 "verified" only for what was observed in the artifact itself; "from config" for what is inferred from paths or
 settings. Use the "Now:" line above to compare against scheduled runs and flag a missed one. After any task, end by
-offering the next useful thing in one line, drawn from what Lantern knows."""
+offering the next useful thing in one line, drawn from what Lantern knows. Secrets: a raw value never goes in a command
+or a note; `secret NAME: <value>` typed in chat goes to the keychain and the message stops before the model; a password
+manager item is linked with `secret link NAME op://...` (also bw://, pass://, keepass://) and read only when a command
+runs; a host is reached with Lantern's own key after one tap on the phone (`ssh grant HOST`); never install a password
+manager for the user."""
 
 
 def session_start(payload: dict) -> dict | None:
@@ -158,6 +162,7 @@ def session_start(payload: dict) -> dict | None:
         moved = ""
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
+            discovery.refresh_frontiers()  # and what is beyond reach closes by itself once its key or sign-in is there
             moved = insights.diff_since_last({e["key"] for e in stage.top(db, k=50) if e["source"] == "insight"}, db)
         profile = memory.profile(db, PROFILE_CHARS)
         rules = memory.rules(db, RULES_CHARS)
@@ -199,6 +204,8 @@ def session_start(payload: dict) -> dict | None:
                   "and the services it knows (daily). Say 'Lantern is watching ...' only in those words; it is true."]
     for snippet in discovery.readme_snippets():
         lines += [f"In the user's own words (README of a recent project): {snippet}"]
+    if discovery.frontier_block():
+        lines += ["", discovery.frontier_block()]
     level = discovery.expertise()
     lines += ["Write for an expert: paths, units and line numbers inline, mechanism stated plainly." if level == "expert" else
               "Write for a non-technical reader: consequence first in plain words, mechanism in one clause, paths in a trailing details line."]
@@ -338,8 +345,11 @@ def user_prompt_submit(payload: dict) -> dict | None:
         return None
     capture_previous(payload)
     answered = setup_answer(prompt)
-    name = shield.paste(prompt)
-    if name:  # a secret handed over in chat: it is now in the keychain and this message never reaches the model
+    name, stored = shield.paste(prompt)
+    if name:  # a secret handed over in chat: this message never reaches the model, stored or not
+        if not stored:  # a device-less session has no keychain, and Lantern never keeps a secret anywhere else
+            return {"decision": "block", "reason": f"This session has no keychain to hold {name}, so it was not stored anywhere "
+                                                    "and never reached the model. Hand it over in a session on your own machine."}
         db = memory.connect()
         try:
             stage.publish(db, f"secret/{name}", "shield", f"The user stored a secret named {name}; commands use it as "
@@ -365,6 +375,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
         noted = note_correction(db, session, prompt)
         touching = memory.rules_touching(db, prompt)
         touching_findings = insights.findings_touching(db, prompt)
+        touching_frontiers = discovery.frontiers_touching(prompt)
         kw_hits = [h for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
         keyword = [h["id"] for h in kw_hits]
@@ -429,6 +440,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
     if touching_findings:
         lines += ["Open findings that touch this request (connect them to it):"] + [f"- {f}" for f in touching_findings]
+    if touching_frontiers:
+        lines += ["Beyond reach and touching this request (do what you can without it; raise the ask once, in one line):"] + [f"- {f}" for f in touching_frontiers]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
         if "finished its survey" in attention:  # deliver the brief now, not at the next session start

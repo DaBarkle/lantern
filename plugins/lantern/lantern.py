@@ -17,7 +17,8 @@ from lantern_core import approvals, curate, discovery, doctor, hooks, memory, sc
 USAGE = """usage: lantern.py hook <name>
        lantern.py doctor | status
        lantern.py stage list | note <message> [--key K] [--score 1-10] [--days N] | resolve <key>
-       lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME
+       lantern.py secret set NAME | run NAME[,NAME...] -- <command> | list | delete NAME | link NAME <ref> | status
+       lantern.py ssh grant HOST [--dry-run] | ssh status     (Lantern's own key, after one tap on the phone)
        lantern.py remember [--profile|--rule|--pattern] <text> | forget <query> | forget --id N | recall <query> | profile
        lantern.py approve setup | "<question>" [--timeout SECONDS]
        lantern.py depth [1-4] | discover [--accept all|1,2,...]
@@ -96,6 +97,9 @@ def main(argv: list[str]) -> int:
         return stage_cli(argv[1:])
     if argv[:1] == ["secret"]:
         return shield.cli(argv[1:])
+    if argv[:1] == ["ssh"]:
+        from lantern_core import sshkey
+        return sshkey.cli(argv[1:])
     if argv[:1] in (["depth"], ["discover"]):
         return discovery.cli(argv if argv[0] == "depth" else argv[1:])
     if argv == ["job", "curate"]:

@@ -28,7 +28,8 @@ these headings and nothing else:
 # What this machine is for
 # How it is set up
 (services, containers, VMs, how projects relate, where data lives; include a markdown table "component | runs on |
-depends on" for the main services, and an indented text tree of how they connect; no mermaid, it does not render here)
+depends on" for the main services, and an indented text tree of how they connect; no mermaid, it does not render here;
+anything listed above as beyond Lantern's reach appears in both, in italics, marked "(not reachable yet)")
 # Existing monitoring and backups
 (what already watches what and where alerts go: uptime checkers, timers, SIEM, notification services; and what the backup
 jobs cover, from their scripts; a table "what | watched or backed up by | alerts to". For every backup target say where it
@@ -75,7 +76,7 @@ def run(data: Path | None = None) -> str:
     """The survey itself (runs detached): one headless, read-only claude session, then store the brief. Progress (files
     read so far) is written as it goes, so a session can say what the survey is doing."""
     data = data or ensure_data_dir()
-    inventory = discovery.summary() or "(nothing yet)"
+    inventory = (discovery.summary() or "(nothing yet)") + ("\n" + discovery.frontier_block() if discovery.frontier_block() else "")
     started = time.time()
     proc = subprocess.Popen([curate.claude_bin(), "-p", "--model", MODEL, "--max-turns", str(MAX_TURNS), "--tools", "Read,Glob,Grep",
                              "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",

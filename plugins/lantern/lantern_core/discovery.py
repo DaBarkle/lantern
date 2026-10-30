@@ -9,6 +9,7 @@ Depth (a consent boundary, `lantern depth N`):
 """
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -65,13 +66,26 @@ def _which(name: str) -> str | None:
 HOST_TOOLS = {"systemctl", "podman", "docker", "flatpak", "virsh", "tailscale", "lspci", "wg", "zerotier-cli"}
 
 
+REFUSED = re.compile(r"permission denied|not permitted|access denied|authorization|connect: no such file", re.I)
+WALLS: list[dict] = []  # refusals met while scouting, kept as frontiers: a wall is a finding, not silence
+
+
+def frontier(id_: str, name: str, why: str, unlocks: str, ask: str) -> dict:
+    return {"id": f"frontier:{id_}", "name": name, "why": why, "unlocks": unlocks, "ask": ask}
+
+
 def _run(cmd: list[str]) -> str:
     if HOST_EXEC and (cmd[0] in HOST_TOOLS or not shutil.which(cmd[0])):
         cmd = [HOST_EXEC, *cmd]  # the container's own systemctl or podman cannot see the host; ask the host
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT).stdout
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         return ""
+    tool = cmd[1] if HOST_EXEC and cmd[0] == HOST_EXEC else cmd[0]
+    if r.returncode != 0 and REFUSED.search(r.stderr or "") and not any(w["id"] == f"frontier:wall:{tool}" for w in WALLS):
+        WALLS.append(frontier(f"wall:{tool}", tool, f"`{tool}` refused this user: {r.stderr.strip().splitlines()[-1][:100]}",
+                              f"seeing what {tool} manages", f"give this user access to {tool} (a group or a socket), or say to leave it"))
+    return r.stdout
 
 
 def scout_repos(root: Path | None = None, max_depth: int = 3) -> list[dict]:
@@ -291,6 +305,7 @@ SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets, scout_alert
 
 
 def discover(depth: int) -> list[dict]:
+    WALLS.clear()
     finds = []
     for level in range(2, min(depth, 3) + 1):
         for scout in SCOUTS[level]:
@@ -384,6 +399,63 @@ def summary() -> str:
     return "; ".join(parts)
 
 
+# The local services that need a key before Lantern can do more than see them answer, and the name the key goes by.
+API_SECRETS = {"Plex": "PLEX_TOKEN", "Home Assistant": "HASS_TOKEN", "UniFi Network": "UNIFI_PASSWORD", "Uptime Kuma": "UPTIME_KUMA_PASSWORD",
+               "Jellyfin": "JELLYFIN_API_KEY", "Sonarr": "SONARR_API_KEY", "Radarr": "RADARR_API_KEY", "Prowlarr": "PROWLARR_API_KEY",
+               "Overseerr/Jellyseerr": "OVERSEERR_API_KEY", "Tautulli": "TAUTULLI_API_KEY", "Portainer": "PORTAINER_API_KEY"}
+
+
+def frontiers() -> list[dict]:
+    """Where discovery stopped: each wall as a finding (what, why Lantern cannot pass it, what passing it would unlock,
+    the one-line ask). A frontier closes by itself once what it needs is there (a key stored, a manager signed in, a
+    wider look allowed), because this is recomputed, never remembered."""
+    from . import shield, sshkey
+    s = settings()
+    out = []
+    if s.get("depth", 2) < 3:
+        out.append(frontier("depth", "the rest of this machine", "the look is limited to projects and tools (depth 2)",
+                            "containers, services, VMs, SSH hosts and local servers", "say 'look wider' and Lantern scouts them, read-only"))
+    if IN_CONTAINER and not HOST_EXEC:
+        out.append(frontier("host", "the host behind this container", "this session runs in a container with no way to the host",
+                            "the host's containers, services and tools", "start the session on the host, or allow distrobox-host-exec"))
+    for m in shield.manager_status()["managers"]:
+        if not m["ready"]:
+            out.append(frontier(f"secrets:{m['tool']}", m["name"], m["why"], "reading linked items at run time, nothing pasted into chat", m["ask"]))
+    held = set(shield.names()) | set(shield.links())
+    for cid, c in s.get("capabilities", {}).items():
+        if cid.startswith("ssh:") and c["name"] not in sshkey.grants():
+            out.append(frontier(cid, c["name"], "Lantern has no key of its own on this host", "checking its services, disks and backups over SSH",
+                                f"one tap on your phone and Lantern installs its own key on {c['name']} (nothing typed)"))
+        need = API_SECRETS.get(c["name"]) if cid.startswith("port:") else None
+        if need and need not in held:
+            out.append(frontier(cid, c["name"], "it answers locally but Lantern has no API key for it", "watching its health, queue and errors",
+                                f"type `secret {need}: <key>` in chat; it goes to the keychain and never reaches the model"))
+    return out + s.get("walls", [])
+
+
+def refresh_frontiers() -> list[dict]:
+    """Recompute and cache the frontiers (a session start and each discovery run), so the prompt hook reads a file, not CLIs."""
+    fs = frontiers()
+    save_settings({**settings(), "frontiers": fs})
+    return fs
+
+
+def frontier_block() -> str:
+    fs = settings().get("frontiers") or []
+    if not fs:
+        return ""
+    return ("Beyond Lantern's reach for now (in any service map or table show these greyed: in italics with '(not reachable yet)'; "
+            "never nag: raise one only when a task or duty needs what is behind it, then in one line with its ask):\n"
+            + "\n".join(f"- {f['name']}: {f['why']}; would unlock {f['unlocks']}. Ask: {f['ask']}" for f in fs))
+
+
+def frontiers_touching(prompt: str) -> list[str]:
+    """Frontiers whose subject the prompt names, so the ask is raised exactly when it is relevant."""
+    words = set(memory.terms(prompt))
+    return [f"{f['name']}: {f['why']}; one-line ask if the task needs it: {f['ask']}"
+            for f in settings().get("frontiers") or [] if set(memory.terms(f["name"])) & words]
+
+
 def auto(now: float | None = None) -> list[dict]:
     """Daily: scout within the depth the user chose, remember what is new, and say so on Stage (once). The depth is
     the consent boundary; within it nothing needs accepting by hand."""
@@ -391,9 +463,12 @@ def auto(now: float | None = None) -> list[dict]:
     s = settings()
     known = s.get("capabilities", {})
     finds = [f for f in discover(min(3, s.get("depth", 2))) if f["id"] not in known]
+    save_settings({**settings(), "walls": list(WALLS)})
     if not finds:
+        refresh_frontiers()
         return []
     accept(finds)
+    refresh_frontiers()
     msg = "Found on this machine and remembered: " + ", ".join(f["name"] for f in finds[:12])
     if len(finds) > 12:
         msg += f" and {len(finds) - 12} more"
