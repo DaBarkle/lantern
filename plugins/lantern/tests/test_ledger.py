@@ -430,3 +430,11 @@ class SetupAnswerTest(unittest.TestCase):
             self.assertIn("failed: x.service", insights.watch_summary(db))
             self.assertIn("Open findings (1; state counts only from this line): 1 failed: x.service", insights.open_block(db))
             db.close()
+
+
+class MissedRunTest(unittest.TestCase):
+    def test_a_scheduled_run_in_the_past_is_missed(self):
+        from lantern_core import insights
+        self.assertTrue(insights._missed("Fri 2026-10-30 03:30:00 AEDT", now=time.mktime(time.strptime("2026-10-30 05:00:00", "%Y-%m-%d %H:%M:%S"))))
+        self.assertFalse(insights._missed("Fri 2026-10-30 03:30:00 AEDT", now=time.mktime(time.strptime("2026-10-30 03:35:00", "%Y-%m-%d %H:%M:%S"))))
+        self.assertFalse(insights._missed(""))

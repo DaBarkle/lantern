@@ -186,6 +186,15 @@ def diff_since_last(found_keys: set[str]) -> str:
     return line
 
 
+def _missed(next_run: str, now: float | None = None) -> bool:
+    """systemd's NextElapse is in the past only when a scheduled run did not happen."""
+    try:
+        t = time.mktime(time.strptime(" ".join(next_run.split()[1:3]), "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, IndexError):
+        return False
+    return (now or time.time()) - t > 15 * 60
+
+
 def backups() -> list[tuple[str, str, float]]:
     """User timers that look like backup jobs: when they last ran and whether that run succeeded."""
     out = []
@@ -194,11 +203,17 @@ def backups() -> list[tuple[str, str, float]]:
     for timer in timers[:5]:
         unit = timer.replace(".timer", ".service")
         show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,ExecMainExitTimestamp", unit]).splitlines() if "=" in l)
+        tshow = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "LastTriggerUSec,NextElapseUSecRealtime", timer]).splitlines() if "=" in l)
         when, result = show.get("ExecMainExitTimestamp", ""), show.get("Result", "")
+        last_trigger, next_run = tshow.get("LastTriggerUSec", ""), tshow.get("NextElapseUSecRealtime", "")
+        # Clock arithmetic is done here, not by the model: a scheduled run whose time has passed without a trigger is missed.
+        missed = _missed(next_run)
         if result and result != "success":
             out.append((f"insight/backup/{unit}", f"backup job {unit} last ended with result {result} (exit {show.get('ExecMainStatus', '?')}) at {when or 'unknown time'}", 7))
+        elif missed:
+            out.append((f"insight/backup/{unit}", f"backup job {unit} MISSED its scheduled run ({next_run} has passed with no trigger; last trigger {last_trigger or 'unknown'})", 6))
         elif when:
-            out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when}", 1))
+            out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when}; next scheduled {next_run or 'unknown'}", 1))
     return out
 
 

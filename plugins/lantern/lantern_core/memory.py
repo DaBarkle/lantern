@@ -186,7 +186,8 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     return d
 
 
-_LOOP = re.compile(r"(?m)^\s*(?:[-*\d.]+\s*)?((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot)|Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked))[^\n]{10,220})")
+_LOOP = re.compile(r"(?m)^\s*(?:[-*\d.]+\s*)?((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
+                   r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{10,220})")
 
 
 def open_loops(reply: str, limit: int = 5) -> list[str]:
