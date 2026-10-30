@@ -72,6 +72,16 @@ class LedgerTest(unittest.TestCase):
         hooks.run(name, io.StringIO(json.dumps(payload)), out)
         return json.loads(out.getvalue()) if out.getvalue() else None
 
+    def test_an_unchecked_admission_is_sent_back_once(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("is plex up?"), assistant("Plex is enabled. I didn't check whether it is actually listening on 32400.")])
+        out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("I didn't check whether it is actually listening on 32400", out["reason"])
+        self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))  # once
+        write(p, [user("is plex up?"), assistant("Plex is listening on 32400 (ss -ltn).")])
+        self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()
@@ -516,6 +526,13 @@ class RuleTouchingTest(unittest.TestCase):
             self.assertIn("Standing rules that touch this request", ctx)
             self.assertIn("never restart Plex", ctx)
             self.assertNotIn("keep replies short", ctx)
+            self.assertNotIn("states its reason", ctx)  # no reason given, nothing to pre-check
+            db = memory.connect()
+            memory.add(db, "rule", "said:s0", "never restart Plex without asking me first, it breaks my parents' stream")
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                ctx = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("run one read-only check of whether that reason holds", ctx)
             db = memory.connect()
             hooks.stage.publish(db, "insight/x", "insight", "plex.container has AutoUpdate=registry: it can restart itself", score=3)
             db.close()

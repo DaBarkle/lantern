@@ -364,6 +364,9 @@ def _store_turn(db, session: str, cwd: str, turn: dict) -> None:
     memory.ledger_update(db, session, cwd, turn)
 
 
+_REASON = re.compile(r"\b(?:because|since|as it|it breaks|breaks|so that|otherwise|my \w+ (?:watch|use|need|rely))\b", re.I)
+
+
 def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
@@ -465,6 +468,10 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       for h in titles]
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
+        if any(_REASON.search(r) for r in touching):
+            lines += ["A rule above states its reason. Before acting on it, run one read-only check of whether that reason holds "
+                      "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
+                      "applies either way."]
     if touching_findings:
         lines += ["Open findings that touch this request (connect them to it):"] + [f"- {f}" for f in touching_findings]
     if touching_frontiers:
@@ -550,6 +557,24 @@ def stop(payload: dict) -> dict | None:
     return None
 
 
+_UNCHECKED = re.compile(r"\bI (?:didn't|did not|couldn't|could not|haven't|have not|was unable to|wasn't able to|have no way to) "
+                        r"(?:check|verify|confirm|look at|look into|read|inspect|see|test)\b[^.\n]{0,160}", re.I)
+
+
+def stop_nudge(payload: dict) -> dict | None:
+    """A reply that admits not checking something is sent back once: if a read-only command on this machine can answer
+    it, the model runs it and replaces the admission with the result. Runs synchronously, so it stays tiny."""
+    if payload.get("stop_hook_active"):
+        return None  # already nudged this turn
+    turn = transcript.last_turn(payload.get("transcript_path", ""))
+    gaps = _UNCHECKED.findall(turn["reply"])
+    if not gaps or _is_system(turn["user"]):
+        return None
+    return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
+            "(status, logs, list, cat, git, systemctl show) can answer that, run it now and state the result in place of the "
+            "admission. If nothing here can answer it, keep the sentence and add in one clause what would."}
+
+
 def subagent_stop(payload: dict) -> dict | None:
     """What an agent found is worth as much as what the main session said: keep its final text."""
     path = payload.get("agent_transcript_path") or ""
@@ -586,7 +611,7 @@ def git_state(db, cwd: str) -> None:
         stage.resolve(db, key)
 
 
-HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop,
+HANDLERS = {"session-start": session_start, "user-prompt-submit": user_prompt_submit, "stop": stop, "stop-nudge": stop_nudge,
             "subagent-stop": subagent_stop, "pre-tool-use": lambda p: shield.pre_tool_use(p) or packs.pre_tool_use(p),
             "signal": statusline.signal}
 
