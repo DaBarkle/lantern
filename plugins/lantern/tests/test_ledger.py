@@ -341,7 +341,13 @@ class InsightsTest(unittest.TestCase):
             with mock.patch.object(insights.discovery, "_run", return_value=""), mock.patch.object(insights, "disk", return_value=[]), \
                     mock.patch.object(insights, "unit_secrets", return_value=[]):
                 msgs = insights.real_run(db)
-            self.assertIn("1 finding(s) resolved", insights.diff_since_last({"insight/repo-noremote/x"}) or "1 finding(s) resolved")
+            insights.diff_since_last({f"insight/repo-risk/{dirty}", f"insight/repo-noremote/{clean}"})  # this session's findings
+            subprocess.run(["git", "-C", str(dirty), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(dirty), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x"], check=True)
+            with mock.patch.object(insights.discovery, "_run", return_value=""):
+                line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
+            self.assertIn("1 finding(s) resolved", line)
+            self.assertIn("dirty: now clean, still no remote", line)  # a vanished finding is explained, never dropped
             self.assertTrue(any("dirty has 1 uncommitted change(s) and no remote" in m for m in msgs), msgs)
             self.assertTrue(any("clean is active but has no remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})

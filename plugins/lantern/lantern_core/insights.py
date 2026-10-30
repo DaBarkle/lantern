@@ -101,7 +101,11 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
             log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
             telling = [l for l in log if "code=" in l or "status=" in l or "timeout" in l.lower() or "error" in l.lower()]
             cause = f": {telling[-1][:160]}" if telling else (f": last log line: {log[-1][:160]}" if log else "")
-            out.append((f"insight/failed/{unit}", f"{unit} has failed{cause}", 5))
+            show = dict(l.split("=", 1) for l in discovery._run(["systemctl", "--user", "show", "-p", "Result,ExecMainStatus,InactiveEnterTimestamp", unit]).splitlines() if "=" in l)
+            when = show.get("InactiveEnterTimestamp", "")
+            detail = f" (result {show.get('Result', '?')}, exit status {show.get('ExecMainStatus', '?')}, at {when})" if show else ""
+            note = "; exit 137 at a logout or shutdown means systemd stopped it, not a crash" if show.get("ExecMainStatus") == "137" else ""
+            out.append((f"insight/failed/{unit}", f"{unit} has failed{cause}{detail}{note}", 5))
     return out
 
 
@@ -118,16 +122,36 @@ def run(db, now: float | None = None) -> list[str]:
     return [m for _, m, _ in found]
 
 
+def _why_resolved(key: str) -> str:
+    """What a finding that no longer appears looks like now, so Lantern never just says it dropped off."""
+    kind, _, rest = key.removeprefix("insight/").partition("/")
+    if kind.startswith("repo"):
+        status = _git(rest, "status", "--porcelain", "--branch").splitlines()
+        remote = _git(rest, "remote")
+        dirty = max(0, len(status) - 1)
+        return (f"{Path(rest).name}: now {'clean' if not dirty else f'{dirty} uncommitted'}, "
+                f"{'has a remote' if remote else 'still no remote'}" + (", nothing unpushed" if status and "ahead" not in status[0] else ""))
+    if kind == "failed":
+        state = discovery._run(["systemctl", "--user", "is-active", rest]).strip() or "unknown"
+        return f"{rest}: now {state}"
+    if kind == "down":
+        return f"{rest.split(':', 1)[-1]}: now responding"
+    if kind == "disk":
+        return "disk: now below the warning level"
+    return key
+
+
 def diff_since_last(found_keys: set[str]) -> str:
-    """One line on how the findings moved since the last session, and remember them for next time."""
+    """How the findings moved since the last session, with what each resolved one looks like now; remembers them."""
     s = discovery.settings()
     before = set(s.get("insights", []))
     s["insights"] = sorted(found_keys)
     discovery.save_settings(s)
-    if not before and not found_keys:
-        return ""
-    resolved, new = before - found_keys, found_keys - before
     if not before:
         return ""
-    return (f"Since the last session: {len(resolved)} finding(s) resolved, {len(new)} new, "
+    resolved, new = before - found_keys, found_keys - before
+    line = (f"Since the last session: {len(resolved)} finding(s) resolved, {len(new)} new, "
             f"{len(found_keys & before)} unchanged (all checked just now).")
+    if resolved:
+        line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
+    return line

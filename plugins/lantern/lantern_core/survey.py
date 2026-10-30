@@ -29,11 +29,16 @@ these headings and nothing else:
 # How it is set up
 (services, containers, VMs, how projects relate, where data lives; include a markdown table "component | runs on |
 depends on" for the main services, and an indented text tree of how they connect; no mermaid, it does not render here)
+# Existing monitoring and backups
+(what already watches what and where alerts go: uptime checkers, timers, SIEM, notification services; and what the backup
+jobs cover, from their scripts; a table "what | watched or backed up by | alerts to")
 # Worth knowing
-(things the owner may not know or has forgotten: stale or unbacked projects, odd configs, duplicated tools, risks; each
-one specific, with the file or folder that shows it)
+(at most five things the owner may not know, each verified from a file and specific, ranked: data at risk of loss first,
+then secrets with a real exposure path (in a repo, a backup or a sync; say which), then services down, then drift. A
+setting that is clearly deliberate, such as an explicit AutoUpdate line, is a choice, not a finding.)
 # What Lantern should take on
-(three to six concrete responsibilities, each one line: watch X daily, flag Y, remind about Z)
+(three to five responsibilities that nothing above already covers, each one line, saying through which existing alert
+channel Lantern would tell the owner; skip anything the existing monitoring already does)
 # Profile
 (two or three sentences about the owner as a user of this machine, inferred from what is here; say "inferred")
 Keep it under 700 words."""
