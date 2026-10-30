@@ -302,6 +302,19 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("I'll ask for the Plex key the first time a restart actually comes up", memory.ledger_get(db, "s1")["loops"])
         db.close()
 
+    def test_a_stop_hook_reason_does_not_start_a_new_turn(self):
+        p = Path(self.tmp.name) / "t.jsonl"
+        write(p, [user("what changed since yesterday?"), assistant("Three new problems: simrepo has uncommitted work."),
+                  user("Stop hook feedback: Not named yet: lantern-sim-fail.service. Add one line per item."),
+                  assistant("lantern-sim-fail.service failed overnight with exit status 1.")])
+        turn = hooks.transcript.last_turn(p)
+        self.assertEqual(turn["user"], "what changed since yesterday?")
+        self.assertIn("simrepo", turn["reply"]); self.assertIn("lantern-sim-fail.service", turn["reply"])
+        self.assertEqual(sum(1 for r, _ in hooks.transcript.messages(p) if r == "user"), 1)
+        with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["lantern-sim-fail.service", "simrepo"], "at": time.time()}}):
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # both named across the turn: no third pass
+            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))
+
     def test_newly_discovered_is_said_once(self):
         from lantern_core import stage
         db = memory.connect()

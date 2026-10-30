@@ -739,15 +739,6 @@ def stop_nudge(payload: dict) -> dict | None:
     turn = transcript.last_turn(payload.get("transcript_path", ""))
     if _is_system(turn["user"]):
         return None
-    since = discovery.settings().get("since_last") or {}
-    first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
-    if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
-        said = turn["reply"].lower()
-        missing = [n for n in since["names"] if n.lower() not in said]
-        if missing:
-            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
-                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
-                    + ". Add one line per item with its state."}
     at = discovery.settings().get("insights_at", 0)
     fresh = time.time() - at < SNAPSHOT_FRESH_S
     if payload.get("stop_hook_active"):  # already nudged this turn: never loop, but never leave the user with nothing either
@@ -756,6 +747,15 @@ def stop_nudge(payload: dict) -> dict | None:
             _log("nudge", {"fallback": True, "user": turn["user"][:200]})
             return {"systemMessage": "What Lantern's own watches see: " + line}
         return None
+    since = discovery.settings().get("since_last") or {}
+    first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
+    if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
+        said = turn["reply"].lower()
+        missing = [n for n in since["names"] if n.lower() not in said]
+        if missing:
+            return {"decision": "block", "reason": "A returning session's first reply, and any answer to what changed, names every item the SINCE LAST "
+                    "SESSION block lists as new, resolved, changed or back again. Not named yet: " + ", ".join(missing[:8])
+                    + ". Add one line per item with its state, once; never mention this check, hooks or Lantern internals to the user."}
     if fresh and hands_off(turn["reply"]):
         _log("nudge", {"hands_off": True, "user": turn["user"][:200]})
         return {"decision": "block", "reason": f"Lantern's own watches ran at {time.strftime('%H:%M', time.localtime(at))}, within the last "
