@@ -78,8 +78,11 @@ scores low on them; a harness that watches the machine scores high. Add new surp
 
 Usage is not the constraint; memory is. The machine also runs the Nyx VM, Wazuh, Steam and the owner's remote session.
 
-- Weeks take one of `WEEK_SLOTS` machine-wide slots (default 1, so one week at a time until the owner raises it); a slot
-  is taken only when available memory is at least 6 GB plus 3 GB for every sim week already running. Each week has its
+- Weeks take one of `WEEK_SLOTS` machine-wide slots (default 3, the owner's decision of 2026-10-31: as many as fit, never
+  an OOM); a slot is taken only when available memory minus the week's 3 GB footprint still leaves 6 GB and swap use did
+  not grow over a 10 s sample. A watchdog aborts the newest week, with full teardown, if available memory falls under
+  3 GB. Measured with three weeks running: about 1.5 GB each in the first minutes, swap rising 0.6 GB, so three is the
+  practical cap on this machine while the owner's own server, Steam and the VM are up. Each week has its
   own memory server (measured 2026-10-31: 330 MB at start, about 0.9 GB after a run; the owner's own server with 40 MB
   of memory sits at 1.3 GB), its own session (about 260 MB) and, on day 1, a Sonnet survey (about 260 MB). Every new
   week first kills orphaned sim servers (a server with no `week.py` above it). Each week's units, timer and SSH host
