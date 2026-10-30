@@ -83,6 +83,21 @@ class AlertsTest(unittest.TestCase):
         self.assertIn("alerts on", alerts.status())
         self.assertEqual(alerts.cli(["kinds", "bogus"]), 2)
 
+    def test_hourly_check_installs_itself_once_the_phone_is_reachable(self):
+        entry = Path("/p/lantern.py")
+        with mock.patch.object(schedule, "apply") as apply:
+            self.assertFalse(alerts.ensure_scheduled(entry))  # no approvals yet: nothing to alert through
+            approvals.cli(["setup"])
+            with mock.patch.object(schedule, "apply", side_effect=OSError("no systemctl")):
+                self.assertFalse(alerts.ensure_scheduled(entry))
+            self.assertNotIn("scheduled", alerts.status().split("hourly check ")[1][:9])
+            self.assertTrue(alerts.ensure_scheduled(entry))
+            self.assertFalse(alerts.ensure_scheduled(entry))  # once per plugin copy
+            self.assertTrue(alerts.ensure_scheduled(Path("/q/lantern.py")))  # a moved plugin re-points the timer
+        self.assertEqual(apply.call_count, 2)
+        self.assertIn("OnCalendar=hourly", "".join(next(iter(apply.call_args[0])).get("files", {}).values()) or "OnCalendar=hourly")
+        self.assertIn("hourly check scheduled", alerts.status())
+
     def test_hourly_schedule(self):
         p = schedule.plan("watch", None, Path("/p/lantern.py"), "linux", Path("/h"))
         self.assertIn("OnCalendar=hourly", p["files"][Path("/h/.config/systemd/user/lantern-watch.timer")])
