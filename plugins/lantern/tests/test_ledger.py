@@ -186,3 +186,15 @@ class JobsTest(unittest.TestCase):
             jobs.mark("doctor", "done")
             self.assertEqual(jobs.due(), [])
             self.assertEqual(jobs.due(now=time.time() + 25 * 3600), ["curate", "doctor"])
+
+
+class DoctorRepairTest(unittest.TestCase):
+    def test_memory_server_down_is_started_not_reported(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(doctor.semantic, "search", return_value=None):
+            spawned = []
+            with mock.patch("subprocess.Popen", side_effect=lambda cmd, **kw: spawned.append(cmd)):
+                status, msg = doctor.check_semantic()
+            self.assertEqual(status, doctor.OK)
+            self.assertIn("started", msg)
+            self.assertTrue(spawned[0][-1].endswith("serve.py"))

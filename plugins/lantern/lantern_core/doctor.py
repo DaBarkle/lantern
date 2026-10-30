@@ -4,6 +4,7 @@ A failing check publishes its finding to Stage; a passing check resolves it; a c
 old finding dropped. So an alert lives exactly as long as its problem.
 """
 import json
+import os
 import time
 
 from . import discovery, memory, semantic, shield, stage
@@ -28,7 +29,18 @@ def check_data_dir():
 
 def check_semantic():
     if semantic.search(ensure_data_dir(), "doctor") is None:
-        return WARN, "memory server is not answering, so recall is keyword-only (it starts with the next session)"
+        # Repair rather than report: start the server detached, as the plugin monitor would at the next session.
+        import subprocess
+        import sys
+        from pathlib import Path
+        kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        kw["creationflags" if sys.platform == "win32" else "start_new_session"] = 0x00000208 if sys.platform == "win32" else True
+        try:
+            subprocess.Popen(["uv", "run", "--no-project", "--quiet", str(Path(__file__).resolve().parents[1] / "serve.py")],
+                             env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())}, **kw)
+        except OSError as e:
+            return WARN, f"memory server was down and could not be started ({e}); recall is keyword-only"
+        return OK, "memory server was down; started it (recall is keyword-only until it is warm)"
     return OK, "memory server answering"
 
 
