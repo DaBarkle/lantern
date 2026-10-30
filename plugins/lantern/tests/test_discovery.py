@@ -95,3 +95,56 @@ class SignalsTest(unittest.TestCase):
                              + [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": "", "check": None} for t in "abcdefgh"])
             self.assertIn("proj: Proj A tool that makes AirPods work on Linux.", discovery.readme_snippets()[0])
             self.assertEqual(discovery.expertise(), "expert")
+
+
+class PlatformTest(unittest.TestCase):
+    """macOS and Windows scouts, with the platform and its commands mocked (the suite runs on Linux)."""
+
+    def test_macos_launchd_jobs_and_brew_casks(self):
+        with tempfile.TemporaryDirectory() as d:
+            import plistlib
+            agents = Path(d) / "agents"; daemons = Path(d) / "daemons"
+            agents.mkdir(); daemons.mkdir()
+            (agents / "com.user.sync.plist").write_bytes(plistlib.dumps({"Label": "com.user.sync", "StartCalendarInterval": {"Hour": 3}}))
+            (agents / "com.apple.foo.plist").write_bytes(plistlib.dumps({"Label": "com.apple.foo"}))
+            (daemons / "com.user.plex.plist").write_bytes(plistlib.dumps({"Label": "com.user.plex", "KeepAlive": True}))
+            (daemons / "broken.plist").write_text("not a plist")
+            calls = []
+
+            def run(cmd):
+                calls.append(cmd)
+                return {"brew": "firefox\nvlc\n", "launchctl": "state = running\n"}.get(cmd[0], "")
+            with mock.patch.object(discovery, "PLATFORM", "mac"), mock.patch.object(discovery, "_run", run), \
+                    mock.patch.object(discovery, "LAUNCHD_DIRS", {str(agents): "gui", str(daemons): "system"}):
+                timers, services, apps = discovery.scout_timers(), discovery.scout_services(), discovery.scout_apps()
+                self.assertEqual([t["name"] for t in timers], ["com.user.sync"])
+                self.assertEqual([s["name"] for s in services], ["com.user.plex"])
+                self.assertEqual(services[0]["check"], {"type": "launchd", "target": "system/com.user.plex"})
+                self.assertIn("daemon", services[0]["detail"])
+                self.assertEqual([a["name"] for a in apps], ["firefox", "vlc"])
+                self.assertTrue(discovery.healthy(services[0]["check"]))
+            self.assertEqual(calls[-1], ["launchctl", "print", "system/com.user.plex"])
+
+    def test_windows_services_tasks_and_winget(self):
+        outputs = {
+            "powershell": '[{"Name":"PlexService","PathName":"\\"C:\\\\Program Files\\\\Plex\\\\Plex.exe\\""},'
+                          '{"Name":"Spooler","PathName":"C:\\\\WINDOWS\\\\System32\\\\spoolsv.exe"}]',
+            "schtasks": '"\\Microsoft\\Windows\\Defrag\\ScheduledDefrag","N/A","Ready"\n"\\Backup nightly","1/11/2026 3:00:00 AM","Ready"\n',
+            "winget": "   - \n"
+                      "Name                 Id                     Version    Available  Source\n"
+                      "------------------------------------------------------------------------\n"
+                      "Git                  Git.Git                2.44.0                winget\n"
+                      "NVIDIA Graphics Driver {B2FE1952-0186}       552.22\n"
+                      "Spotify              Spotify.Spotify        1.2.3      1.2.4      msstore\n",
+            "sc": "SERVICE_NAME: PlexService\n        STATE              : 4  RUNNING\n",
+        }
+        with mock.patch.object(discovery, "PLATFORM", "windows"), mock.patch.dict(os.environ, {"SystemRoot": r"C:\Windows"}), \
+                mock.patch.object(discovery, "_run", lambda cmd: outputs.get(cmd[0], "")):
+            services, timers, apps = discovery.scout_services(), discovery.scout_timers(), discovery.scout_apps()
+            self.assertEqual([s["name"] for s in services], ["PlexService"])
+            self.assertEqual(services[0]["check"], {"type": "winservice", "name": "PlexService"})
+            self.assertEqual([t["name"] for t in timers], ["\\Backup nightly"])
+            self.assertEqual([(a["name"], a["id"]) for a in apps], [("Git", "app:Git.Git"), ("Spotify", "app:Spotify.Spotify")])
+            self.assertTrue(discovery.healthy(services[0]["check"]))
+        with mock.patch.object(discovery, "PLATFORM", "windows"), mock.patch.object(discovery, "_run", lambda cmd: ""):
+            self.assertEqual(discovery.scout_services() + discovery.scout_timers() + discovery.scout_apps(), [])  # nothing answered
