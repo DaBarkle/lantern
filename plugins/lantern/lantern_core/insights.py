@@ -264,14 +264,14 @@ def backups() -> list[tuple[str, str, float]]:
 def open_block(db) -> str:
     """Every open finding by category, so a session states counts from here and never miscounts or drops one."""
     entries = [e for e in stage.top(db, k=200) if e["source"] == "insight" and not e["key"].startswith("insight/backup-ok")]
-    if not entries:
+    worth = [e["message"][:80] for e in stage.top(db, k=200) if e["key"].startswith("survey/worth/")]
+    if not entries and not worth:
         return "Open findings: none."
     groups: dict[str, list[str]] = {}
     for e in entries:
         groups.setdefault(e["key"].split("/")[1], []).append(e["message"].split(" (")[0].split(" has ")[0].split(" is ")[0][:60])
     parts = [f"{len(v)} {k.replace('repo-', 'project ')}: " + ", ".join(v[:12]) for k, v in sorted(groups.items())]
-    worth = [e["message"][:80] for e in stage.top(db, k=200) if e["key"].startswith("survey/worth/")]
-    line = f"Open findings ({len(entries)}; state counts only from this line): " + " | ".join(parts) + "."
+    line = f"Open findings ({len(entries)}; state counts only from this line): " + (" | ".join(parts) or "none") + "."
     if worth:
         line += f" Survey risks still open ({len(worth)}): " + " | ".join(worth) + "."
     return line
