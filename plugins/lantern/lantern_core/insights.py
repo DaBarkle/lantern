@@ -181,6 +181,8 @@ def diff_since_last(found_keys: set[str]) -> str:
     resolved, new = before - found_keys, found_keys - before
     line = (f"Since the last session: {len(resolved)} finding(s) resolved, {len(new)} new, "
             f"{len(found_keys & before)} unchanged (all checked just now).")
+    if new:
+        line += " New: " + "; ".join(k.removeprefix("insight/").replace("/", " ", 1).replace(str(Path.home()), "~") for k in sorted(new)[:6]) + "."
     if resolved:
         line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
     return line

@@ -74,6 +74,8 @@ class ScheduleTest(unittest.TestCase):
         p = schedule.plan("doctor", 3, self.entry, "linux", Path("/h"))
         timer = p["files"][Path("/h/.config/systemd/user/lantern-doctor.timer")]
         self.assertIn("OnCalendar=*-*-* 03:00:00", timer)
+        service = p["files"][Path("/h/.config/systemd/user/lantern-doctor.service")]
+        self.assertIn("ExecStart=/", service)  # a full path: systemd's PATH has no uv
         self.assertIn("enable", p["commands"][-1])
 
     def test_macos_and_windows(self):

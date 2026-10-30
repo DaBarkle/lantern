@@ -2,14 +2,16 @@
 
 plan() only describes the change (files to write, commands to run); apply() makes it.
 """
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
 def _launcher(entry: Path, job: str, data: Path | None = None) -> list[str]:
-    # The job runs outside Claude Code, so it is told which data folder the sessions use.
-    return ["uv", "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
+    # The job runs outside Claude Code with the scheduler's bare PATH, so uv is named by its full path.
+    uv = shutil.which("uv") or "uv"
+    return [uv, "run", "--no-project", "--quiet", str(entry), "job", job] + (["--data", str(data)] if data else [])
 
 
 def plan(job: str, hour: int, entry: Path, platform: str = sys.platform, home: Path = Path.home(),
