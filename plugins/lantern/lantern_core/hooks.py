@@ -170,6 +170,7 @@ def session_start(payload: dict) -> dict | None:
         no_rules = not memory.rules(db, 2000)
         watches = insights.watch_summary(db)
         open_block = insights.open_block(db)
+        found_new = insights.discovered_since_last(db)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
@@ -234,6 +235,8 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "On Lantern's Stage (open findings, most pressing first, checked within the last hour):", attention]
     if moved:
         lines += [moved]
+    if found_new:
+        lines += [found_new]
     lines += [open_block]
     if not first:
         at = discovery.settings().get("insights_at")
@@ -313,6 +316,7 @@ def user_prompt_submit(payload: dict) -> dict | None:
             want = set(memory.terms(query))
         noted = note_correction(db, session, prompt)
         touching = memory.rules_touching(db, prompt)
+        touching_findings = insights.findings_touching(db, prompt)
         kw_hits = [h for h in memory.search(db, query, limit=(RECALL_LIMIT + TITLE_LIMIT) * 3)
                    if len(want & set(memory.terms(h["text"]))) >= need]
         keyword = [h["id"] for h in kw_hits]
@@ -375,6 +379,8 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       for h in titles]
     if touching:
         lines += ["Standing rules that touch this request (quote the one you apply, word for word):"] + [f"- {r}" for r in touching]
+    if touching_findings:
+        lines += ["Open findings that touch this request (connect them to it):"] + [f"- {f}" for f in touching_findings]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
         if "finished its survey" in attention:  # deliver the brief now, not at the next session start

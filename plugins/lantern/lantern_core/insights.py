@@ -158,16 +158,26 @@ def _why_resolved(key: str) -> str:
         status = _git(rest, "status", "--porcelain", "--branch").splitlines()
         remote = _git(rest, "remote")
         dirty = max(0, len(status) - 1)
-        return (f"{Path(rest).name}: now {'clean' if not dirty else f'{dirty} uncommitted'}, "
-                f"{'has a remote' if remote else 'still no remote'}" + (", nothing unpushed" if status and "ahead" not in status[0] else ""))
+        head = _git(rest, "log", "-1", "--format=%h %cs")
+        return (f"{Path(rest).name}: now {'clean' if not dirty else f'{dirty} uncommitted'} (last commit {head or 'none'}), "
+                f"{'has a remote' if remote else 'still no remote, so still unbacked unless a backup job covers it'}"
+                + (", nothing unpushed" if status and "ahead" not in status[0] else ""))
     if kind == "failed":
         state = discovery._run(["systemctl", "--user", "is-active", rest]).strip() or "unknown"
-        return f"{rest}: now {state}"
+        return f"{rest}: now {state}" + (" (its failed state was cleared; it is not shown running)" if state == "inactive" else " (running again)" if state == "active" else "")
     if kind == "down":
         return f"{rest.split(':', 1)[-1]}: now responding"
     if kind == "disk":
         return "disk: now below the warning level"
     return key
+
+
+def discovered_since_last(db) -> str:
+    """What discovery found new since the last session, from its Stage note."""
+    for e in stage.top(db, k=200):
+        if e["key"] == "discovery/new":
+            return e["message"]
+    return ""
 
 
 def diff_since_last(found_keys: set[str]) -> str:
@@ -186,6 +196,30 @@ def diff_since_last(found_keys: set[str]) -> str:
     if resolved:
         line += " Resolved: " + "; ".join(_why_resolved(k) for k in sorted(resolved)[:6]) + "."
     return line
+
+
+def _age(stamp: str, now: float | None = None) -> str:
+    """'27 h ago' from a systemd timestamp, computed here so the model never does clock arithmetic."""
+    try:
+        t = time.mktime(time.strptime(" ".join(stamp.split()[1:3]), "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, IndexError):
+        return "age unknown"
+    h = ((now or time.time()) - t) / 3600
+    return f"{h:.0f} h ago" if h < 48 else f"{h / 24:.0f} days ago"
+
+
+def findings_touching(db, prompt: str, limit: int = 3) -> list[str]:
+    """Open findings and Stage notes that mention a distinctive word from the request, so a question about Plex sees
+    the Plex findings without the user asking for them."""
+    words = {w for w in discovery.memory.terms(prompt) if len(w) >= 4}
+    if not words:
+        return []
+    hits = []
+    for e in stage.top(db, k=200):
+        text = e["message"].lower()
+        if any(w in text for w in words):
+            hits.append(e["message"][:300])
+    return hits[:limit]
 
 
 def _missed(next_run: str, now: float | None = None) -> bool:
@@ -215,7 +249,7 @@ def backups() -> list[tuple[str, str, float]]:
         elif missed:
             out.append((f"insight/backup/{unit}", f"backup job {unit} MISSED its scheduled run ({next_run} has passed with no trigger; last trigger {last_trigger or 'unknown'})", 6))
         elif when:
-            out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when}; next scheduled {next_run or 'unknown'}", 1))
+            out.append((f"insight/backup-ok/{unit}", f"backup job {unit} last succeeded at {when} ({_age(when)}); next scheduled {next_run or 'unknown'}", 1))
     return out
 
 

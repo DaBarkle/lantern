@@ -190,7 +190,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["turns"] += 1
     d["last"] = turn["user"][:400]
     d["reply"] = turn.get("reply", "")[-600:]  # the end of the last reply usually carries the next steps
-    d["loops"] = open_loops(turn.get("reply", ""))
+    d["loops"] = list(dict.fromkeys(d.get("loops", []) + open_loops(turn.get("reply", ""))))[-8:]  # across the session
     with db:
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET cwd=excluded.cwd, "
                    "updated=excluded.updated, data=excluded.data", (session, cwd, row[1] if row else now, now, json.dumps(d)))
@@ -198,7 +198,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
 
 
 _LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] ))((?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not)|Next,? I can|I'll|I will|I'd|"
-                   r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{10,220})")
+                   r"Not (?:yet )?(?:done|checked)|Open question|Until you confirm)[^\n]{6,220})")
 
 
 def open_loops(reply: str, limit: int = 5) -> list[str]:

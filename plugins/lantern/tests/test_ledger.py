@@ -353,7 +353,8 @@ class InsightsTest(unittest.TestCase):
             with mock.patch.object(insights.discovery, "_run", return_value=""):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
             self.assertIn("1 finding(s) resolved", line)
-            self.assertIn("dirty: now clean, still no remote", line)  # a vanished finding is explained, never dropped
+            self.assertIn("dirty: now clean (last commit", line)  # a vanished finding is explained, never dropped
+            self.assertIn("still no remote", line)
             line = insights.diff_since_last({f"insight/repo-noremote/{clean}", "insight/failed/x.service"})
             self.assertIn("New: failed x.service", line)
             self.assertTrue(any("dirty (" in m and "has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
@@ -455,6 +456,10 @@ class HeadlessCaptureTest(unittest.TestCase):
             db = memory.connect()
             self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn'").fetchone()[0], 1)  # once, not twice
             self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet"])
+            write(p, [user("check the plex unit"), assistant("Done. I didn't check the journal yet."), user("and now?"), assistant("Next, I can read it.")])
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                hooks.user_prompt_submit({"prompt": "go", "session_id": "s1", "transcript_path": str(p), "cwd": d})
+            self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # accumulated
             db.close()
 
 
@@ -471,3 +476,9 @@ class RuleTouchingTest(unittest.TestCase):
             self.assertIn("Standing rules that touch this request", ctx)
             self.assertIn("never restart Plex", ctx)
             self.assertNotIn("keep replies short", ctx)
+            db = memory.connect()
+            hooks.stage.publish(db, "insight/x", "insight", "plex.container has AutoUpdate=registry: it can restart itself", score=3)
+            db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                r = hooks.user_prompt_submit({"prompt": "plex looks stuck, restart it now", "session_id": "s2"})
+            self.assertIn("Open findings that touch this request", r["hookSpecificOutput"]["additionalContext"])
