@@ -30,7 +30,7 @@ Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Sa
 | **Approvals** | Questions that matter go to your phone (ntfy), outbound only, with a confirmation back. To reach another host Lantern makes its own SSH key and asks once on the phone before installing it; nothing is typed and your keys stay where they are. The same topic carries one line when a watch trips while no session is open (a failed service, a service down, a disk running short, a backup missed or failed) and one line when it clears; never a repeat. | Say yes from anywhere, and hear about trouble while away. |
 | **Status** | `lantern status`: *3 notes recalled last turn · 2,484 things known · learned 4 today · all well*. | One plain line, no readouts. |
 
-No model call ever sits on the prompt path. A prompt costs Lantern about 50 milliseconds.
+No model call ever sits on the prompt path. A prompt costs Lantern about 150 milliseconds (measured on a 2,500-item memory; the doctor warns if 9 in 10 hook runs exceed its budget).
 
 ## Commands
 

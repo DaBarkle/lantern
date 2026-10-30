@@ -4,7 +4,7 @@ Thanks for helping. Lantern is small on purpose; please keep it that way.
 
 ## Principles
 
-- **No model call on the prompt path.** Hooks must finish in well under 100 ms. Anything that needs a model runs in a daily job.
+- **No model call on the prompt path.** The prompt hook finishes in about 150 ms today and the doctor warns past its budget; anything that needs a model runs in a daily job.
 - **Deterministic where possible.** Capture, ledger, recall, discovery and the doctor are plain code with tests. One small model call a day does the curation.
 - **The user never tinkers.** A feature that needs a setting, a command or a manual step as its normal path is not finished. Prefer self-repair to a report.
 - **Nothing hard-wired.** No paths, hosts or service names from one machine in core. Machine-specific knowledge goes in memory or in a pack.

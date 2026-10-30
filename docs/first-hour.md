@@ -13,7 +13,7 @@ turns and time, stands down under memory pressure).
 
 **The first reply.** Who Lantern is in two sentences; what it found as a table; the findings as "things you may not know";
 one structured question: look wider (read-only), take on the responsibilities the findings suggest, approvals on the
-phone. Secrets are a line, not a step: `secret NAME: value` in chat goes to the keychain and never reaches the model.
+phone. Secrets are a sentence, not a step: when a key is needed Lantern asks for it in plain words, the user pastes it as the next message, and it goes to the keychain without ever reaching the model.
 Then two questions for the profile (what the machine is for; what to be careful about), and a closing table of what
 Lantern now does, with one concrete thing it can do right now.
 
