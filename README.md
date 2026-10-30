@@ -25,7 +25,7 @@ Lantern needs [uv](https://docs.astral.sh/uv/), which fetches its own Python. Yo
 | **Discovery** | Within the depth you choose, Lantern finds your repos, tools, containers, services and local servers, remembers them and suggests the packs that add skills for them. | Your environment, known without onboarding. |
 | **Stage** | Open findings in one place: the doctor's, uncommitted work left in a project, new things found. Each fades and expires on its own. | You hear about what matters, once. |
 | **Doctor** | Daily, and on demand: recall rate, memory freshness, hook latency, secret shield, each accepted capability. It repairs what it safely can. | You do not wonder whether it is working. |
-| **Shield** | Raw secrets never enter a command, a file or a note. Values live in the OS keychain and reach commands as environment variables. | Nothing leaks into memory. |
+| **Shield** | Raw secrets never enter a command, a file, a note or the model. Hand one over in chat as `secret NAME: value`: Lantern stores it in the OS keychain and stops that message before the model sees it. Commands get it as an environment variable; 1Password items can be linked and read only at run time. | Nothing leaks, and you never leave the conversation. |
 | **Approvals** | Questions that matter go to your phone (ntfy), outbound only, with a confirmation back. | Say yes from anywhere. |
 | **Status** | `lantern status`: *3 notes recalled last turn · 2,484 things known · learned 4 today · all well*. | One plain line, no readouts. |
 
