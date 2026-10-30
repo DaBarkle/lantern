@@ -140,7 +140,7 @@ def main(folder: str):
             if "done" in (data / "survey.json").read_text() if (data / "survey.json").exists() else "":
                 break
             time.sleep(15)
-        say(1, "user: thanks (survey finished)", s1.say("thanks"), s1)
+        say(1, "user: thanks, and yes, look wider (survey finished)", s1.say("thanks, and yes, look wider"), s1)
         rule = "from now on, never restart Plex without asking me first, it breaks my parents' stream"
         say(1, f"user: {rule}", s1.say(rule), s1)
         s1.close()

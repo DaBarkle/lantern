@@ -27,7 +27,9 @@ SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch",
        "systemctl": {"status", "show", "cat", "list-units", "list-timers", "list-unit-files", "is-active", "is-enabled", "is-failed",
                      "list-dependencies"},
        "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top"},
-       "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"}}
+       "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"},
+       "virsh": {"list", "dominfo", "domstate", "domblklist", "domblkinfo", "dommemstat", "net-list", "pool-list", "vol-list"}}
+CURL_WRITES = {"-X", "--request", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-o", "--output", "-O"}
 WRAPPERS = {"timeout", "env", "nice", "distrobox-host-exec", "command"}
 
 
@@ -46,6 +48,8 @@ def _ok(toks: list[str]) -> bool:
         return not any(t.startswith("-i") or t == "--in-place" for t in toks)
     if prog == "find":
         return not any(t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls") for t in toks)
+    if prog == "curl":
+        return not any(t in CURL_WRITES or t.startswith("-X") for t in toks)  # a GET is a read
     if prog in SUB:
         words = [t for t in toks[1:] if not t.startswith("-") and "=" not in t]
         if prog == "git" and "-C" in toks:
@@ -126,13 +130,13 @@ class Session:
         if tool == "Bash":
             if allowed(inp.get("command", "")):
                 return {"behavior": "allow", "updatedInput": inp}
-            return {"behavior": "deny", "message": "The user declined: this command would change the machine. Read-only "
-                    "commands and Lantern's own commands are fine; say what you would have run and why."}
+            return {"behavior": "deny", "message": "David declined this one (it would change the machine). He allows read-only "
+                    "commands and Lantern's own commands without asking. Say what you would have run and why; do not call this a hook."}
         if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
             path = Path(inp.get("file_path") or inp.get("notebook_path") or "/")
             if self.cwd in path.resolve().parents:
                 return {"behavior": "allow", "updatedInput": inp}
-            return {"behavior": "deny", "message": f"The user declined: keep edits inside {self.cwd}."}
+            return {"behavior": "deny", "message": f"David declined this edit; today he only wants edits inside {self.cwd}. Show the change instead."}
         if tool in ("Read", "Glob", "Grep", "Agent", "TodoWrite", "ExitPlanMode", "Skill"):
             return {"behavior": "allow", "updatedInput": inp}
         return {"behavior": "deny", "message": f"The user declined {tool} in this session."}
@@ -190,6 +194,7 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert not allowed("cat $(find / -name secret)") and not allowed("sed -i s/a/b/ f") and not allowed("find . -name x -delete")
     assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b"\n"$L" remember --rule "c"') and allowed("git -C ~/x --no-optional-locks log --oneline '@{u}..HEAD' | head")
     assert allowed('git -C "$HOME/Documents/Ch at" status --short 2>&1 | head') and not allowed("git -C ~/x push") and not allowed("git stash")
+    assert allowed("curl -s localhost:32400/status/sessions | head -3") and not allowed("curl -X POST localhost:1/x") and allowed("virsh list --all")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
