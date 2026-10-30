@@ -48,7 +48,7 @@ class FrontierTest(unittest.TestCase):
         self.assertIn("(not reachable yet)", discovery.frontier_block())
         self.assertIn("Sonarr: it answers locally", discovery.frontier_block())
         self.assertEqual(len(discovery.frontiers_touching("why is the sonarr queue stuck")), 1)
-        self.assertIn("secret SONARR_API_KEY", discovery.frontiers_touching("sonarr")[0])
+        self.assertIn("secret ask SONARR_API_KEY", discovery.frontiers_touching("sonarr")[0])
         self.assertEqual(discovery.frontiers_touching("how is the disk doing"), [])
 
     def test_depth_two_is_itself_a_frontier(self):

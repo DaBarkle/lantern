@@ -191,6 +191,24 @@ class SecretHandoverTest(unittest.TestCase):
             db.close()
             self.assertEqual(shield.paste("tell me a secret: how does plex work"), (None, False))
 
+    def test_after_an_ask_the_value_pasted_on_its_own_is_the_hand_over(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            self.assertEqual(shield.paste("abc123XYZtoken"), (None, False))  # nothing asked: a bare word is a prompt
+            sentence = shield.ask("PLEX_TOKEN")
+            self.assertIn("plex token", sentence)
+            self.assertNotIn("secret ", sentence)  # the user is never shown syntax
+            self.assertEqual(shield.paste("is plex still down?"), (None, False))  # a sentence is not a value
+            calls = []
+            with mock.patch.object(shield.subprocess, "run", side_effect=lambda cmd, **kw: calls.append((cmd, kw.get("input"))) or mock.Mock(returncode=0)):
+                reply = hooks.user_prompt_submit({"prompt": "abc123XYZtoken\n", "session_id": "s"})
+            self.assertEqual(reply["decision"], "block")
+            self.assertEqual(calls[0][1], "abc123XYZtoken")
+            self.assertIn("PLEX_TOKEN", calls[0][0])
+            self.assertIsNone(shield.pending())  # answered once
+            shield.ask("PLEX_TOKEN")
+            with mock.patch.object(shield.time, "time", return_value=shield.time.time() + shield.ASK_SECONDS + 1):
+                self.assertEqual(shield.paste("abc123XYZtoken"), (None, False))  # an old ask does not swallow a later word
+
     def test_without_a_keychain_the_secret_is_still_stopped_and_kept_nowhere(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
                 mock.patch.object(shield.subprocess, "run", return_value=mock.Mock(returncode=1)):

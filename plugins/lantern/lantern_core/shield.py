@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .paths import ensure_data_dir
@@ -62,8 +63,8 @@ def pre_tool_use(payload: dict) -> dict | None:
     if not hits:
         return None
     return _deny(f"Lantern shield: this {payload.get('tool_name', 'call')} contains what looks like a raw "
-                 f"{', '.join(hits)}. Store it with `lantern secret set NAME` and run the command with "
-                 "`lantern secret run NAME -- <command>`, which passes it as the $NAME environment variable.")
+                 f"{', '.join(hits)}. Ask the user for it with `lantern secret ask NAME` (show them its sentence, never syntax), "
+                 "then run the command as `lantern secret run NAME -- <command>`, which passes it as the $NAME environment variable.")
 
 
 # --- secret broker: values in the OS keychain, names in a local index (keychains can't list) ---
@@ -153,11 +154,11 @@ def _ready(scheme: str, held: set[str]) -> tuple[bool, str, str]:
     if scheme == "bw":
         ok = UNLOCK["bw"] in held or bool(os.environ.get("BW_SESSION"))
         return ok, "the Bitwarden CLI is installed but its vault is locked", \
-            "hand over the session key once as `secret BW_SESSION: <value>` (from `bw unlock --raw`)"
+            "ask once for the session key from `bw unlock --raw` (`lantern secret ask BW_SESSION` gives the sentence to show)"
     if scheme == "pass":
         return (Path.home() / ".password-store").is_dir(), "pass is installed but has no store", "run `pass init <gpg-id>` once"
     return UNLOCK["keepass"] in held, "KeePassXC is installed but Lantern has no database password", \
-        "hand it over once as `secret KEEPASSXC_PASSWORD: <value>`"
+        "ask once for the database password (`lantern secret ask KEEPASSXC_PASSWORD` gives the sentence to show)"
 
 
 def manager_status() -> dict:
@@ -176,6 +177,23 @@ def manager_status() -> dict:
 
 
 PASTE = re.compile(r"^\s*secret\s+([A-Za-z][A-Za-z0-9_]{0,63})\s*[:=]\s*(\S{4,})\s*$")
+BARE = re.compile(r"^\s*(\S{8,512})\s*$")  # a value pasted on its own, once Lantern has asked for one
+ASK_SECONDS = 600  # an ask is answered by the next message or not at all: a bare word ten minutes later is not a secret
+
+
+def ask(name: str) -> str:
+    """Record that Lantern is waiting for NAME and give the one plain sentence to show the user: no syntax to type."""
+    (ensure_data_dir() / "secret-ask.json").write_text(json.dumps({"name": name, "at": time.time()}))
+    what = name.replace("_", " ").lower()
+    return f"Paste the {what} as your next message, on its own. It goes straight into your keychain and never reaches me."
+
+
+def pending() -> str | None:
+    try:
+        a = json.loads((ensure_data_dir() / "secret-ask.json").read_text())
+        return a["name"] if time.time() - a["at"] < ASK_SECONDS else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def paste(prompt: str) -> tuple[str | None, bool]:
@@ -183,9 +201,13 @@ def paste(prompt: str) -> tuple[str | None, bool]:
     so the hook can stop the prompt before it reaches the model whether or not this session has a keychain. The value
     is never printed or logged."""
     m = PASTE.match(prompt)
-    if not m:
+    if m:
+        name, value = m.group(1), m.group(2)
+    elif pending() and BARE.match(prompt):  # the answer to an ask: the value alone, no syntax
+        name, value = pending(), BARE.match(prompt).group(1)
+    else:
         return None, False
-    name, value = m.group(1), m.group(2)
+    (ensure_data_dir() / "secret-ask.json").unlink(missing_ok=True)
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lantern.py")
     try:
         r = subprocess.run(["uv", "run", "--no-project", "--quiet", "--with", "keyring", script, "secret", "set", name],
@@ -196,10 +218,13 @@ def paste(prompt: str) -> tuple[str | None, bool]:
 
 
 def cli(argv: list[str]) -> int:
-    """lantern secret set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME | link NAME <manager reference> | status
+    """lantern secret ask NAME | set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME | link NAME <manager reference> | status
     References: op://vault/item/field, bw://item[/field], pass://path, keepass:///db.kdbx/entry"""
     if argv[:1] == ["list"]:
         print("\n".join(sorted(set(names()) | set(links()))))
+        return 0
+    if argv[:1] == ["ask"] and len(argv) == 2 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", argv[1]):
+        print(ask(argv[1]))
         return 0
     if argv[:1] == ["status"]:
         st = manager_status()
