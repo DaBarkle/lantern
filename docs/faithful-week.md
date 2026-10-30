@@ -218,9 +218,14 @@ five confirmed, one rig issue, none refuted.
   Stop-hook check that refuses "I don't know the state" and "run it yourself" while a snapshot exists is the fix.
 - **Jargon for a non-technical user** (impact 8, harness). `discovery.expertise()` rates the reader from the machine
   (many services means "expert") and the session instruction then asks for paths and units inline; nothing reads the
-  user's own words ("the plex thing", "keep it simple"). A plain-language level taken from the user must outrank it.
+  user's own words ("the plex thing", "keep it simple"). Fixed: `lantern_core/register.py` learns the level from the
+  user's messages only (plain by default; "I'm a developer", a pasted path or command makes an expert; "keep it simple"
+  wins for good) and their own names for things; the session register line, the question wording and the status line
+  follow it.
 - **A guess hardened into a fact** (impact 6, harness). The "Last exchange" carried to the next session is cut at 600
   characters, which dropped "It's a guess, because I couldn't read Plex's own error log"; day 3 stated the cause flat.
+  Fixed: `memory.carry` keeps the opening, every hedged sentence and the ending whole at every cut (turn capture,
+  ledger, last exchange) and marks the carried text as holding guesses.
 - Open loops dropped or reworded (model-side; the loop ledger only spans one session and misses "Say which...").
 - Watcher coverage gap: new user timers and large new files are not among `insights.run` checks (both held-out items
   were missed).

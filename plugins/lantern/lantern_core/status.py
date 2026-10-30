@@ -3,7 +3,7 @@ needs them. For Claude Code's status line (`lantern status`) and the /lantern:st
 import json
 import time
 
-from . import memory, stage
+from . import memory, register, stage
 from .paths import ensure_data_dir
 
 
@@ -45,7 +45,7 @@ def line(now: float | None = None) -> str:
     if found:
         parts.append(f"found {found} new on this machine")
     if findings:
-        parts.append("needs you: " + findings[0]["message"][:80])
+        parts.append("needs you: " + register.say(findings[0]["message"])[:80])
     else:
         parts.append("all well")
     return "Lantern: " + " · ".join(parts)

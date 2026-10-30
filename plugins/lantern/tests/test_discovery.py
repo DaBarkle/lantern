@@ -94,7 +94,8 @@ class SignalsTest(unittest.TestCase):
             discovery.accept([{"id": f"repo:{repo}", "kind": "repo", "name": "proj", "detail": "", "check": None}]
                              + [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": "", "check": None} for t in "abcdefgh"])
             self.assertIn("proj: Proj A tool that makes AirPods work on Linux.", discovery.readme_snippets()[0])
-            self.assertEqual(discovery.expertise(), "expert")
+            from lantern_core import register
+            self.assertEqual(register.level(), "plain")  # eight dev tools say nothing about the reader; only their words do
 
 
 class PlatformTest(unittest.TestCase):
