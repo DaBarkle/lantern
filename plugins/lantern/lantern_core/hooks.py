@@ -897,10 +897,11 @@ def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
         if name == "pre-tool-use":
             raise  # the shield fails closed on its own terms; a crash there must stay visible
         reply = _crashed(name, e)
-    if name != "pre-tool-use":  # every prompt-path hook reports how long it took; the doctor watches the trend
-        _log("hooks", {"hook": name, "ms": round((time.monotonic() - t0) * 1000)})
-    if reply:
-        stdout.write(json.dumps(reply))
+    text = json.dumps(reply) if reply else ""
+    if name != "pre-tool-use":  # every prompt-path hook reports how long it took and how much it said; the doctor watches the trend
+        _log("hooks", {"hook": name, "ms": round((time.monotonic() - t0) * 1000), "bytes": len(text)})
+    if text:
+        stdout.write(text)
     return 0
 
 
