@@ -44,7 +44,10 @@ def data_dir() -> Path:
     if os.environ.get("CLAUDE_PLUGIN_DATA"):
         base = Path(os.environ["CLAUDE_PLUGIN_DATA"])
         try:
-            if not _pointer().exists() or _pointer().read_text().strip() != str(base):
+            current = _pointer().read_text().strip() if _pointer().exists() else ""
+            # A plugin loaded from a folder (`--plugin-dir`, data under "lantern-inline") is a trial run: it never
+            # redirects the user's shell commands away from the installed plugin's data.
+            if current != str(base) and not (current and base.name == "lantern-inline"):
                 _pointer().parent.mkdir(parents=True, exist_ok=True)
                 _pointer().write_text(str(base))
         except OSError:

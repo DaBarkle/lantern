@@ -37,6 +37,10 @@ class PointerTest(unittest.TestCase):
                 env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PLUGIN_DATA", "LANTERN_HOME")}
                 with mock.patch.dict(os.environ, env, clear=True):
                     self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # a `lantern` command from a shell
+                with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": f"{d}/lantern-inline"}):
+                    self.assertEqual(paths.data_dir(), Path(d) / "lantern-inline")  # a folder-loaded trial run
+                with mock.patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(paths.data_dir(), Path(d) / "plugin-data")  # ...never redirected the shell
 
 
 class ProfileTest(unittest.TestCase):
