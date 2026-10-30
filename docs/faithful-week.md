@@ -228,3 +228,26 @@ five confirmed, one rig issue, none refuted.
 Rig: the policy had declined read-only compound commands (fixed before this write-up; all four replay as allowed
 except a `podman exec`), the deny message no longer says "would change the machine", and the lint now reports
 "hands-off violations" (the user sent to a shell, or told Lantern does not know). A killed week now runs its teardown.
+
+### 2026-10-31, flap scenario, week 7 on 34205d2
+
+The unit fails on night 1, is reset on night 2 and fails again just before day 3. Rig lint 0/0/0, audit clean (one
+refused command: a desktop-app restart). Critic medians: watches 4, open loops 4, rules 7, since-last 4, sharper 5,
+just works 5, autonomy 6. Both held-out items (timer, SSH host) were found on day 2. Verification: four confirmed, one
+rig issue, two refuted ("invented local-only preference" is recorded in the backup README; "jargon" was judged against a
+persona this scenario does not use).
+
+1. **The re-failed unit vanished** (impact 9, harness). The night-2 watcher ran `insights.run(force=True)` minutes before
+   day 3, so day 3's session start took the cached findings (`insights.py` `FRESH_SECONDS`), in which the unit was not
+   failed; the diff called it resolved while `_why_resolved` saw it live as "now failed", and the context said "all checked
+   just now". Cheap checks must run live at session start, and a finding that comes back needs a "back again" bucket.
+2. **Stale since-last baseline** (impact 8, harness): the discovery note is re-read for two days, so day-2 finds are
+   announced again on day 3 (`insights.py` `discovered_since_last`, `discovery.py`).
+3. **Day 3 got day 1's open loops** (impact 8, harness): the model `cd`-ed into a sub-folder during day 2, the ledger
+   records the last cwd per turn, and `ledger_last` prefers a matching cwd, so day 2's loops were skipped (`memory.py`,
+   `hooks.py`). Also the loop pattern misses offers and questions, as every week.
+4. **Lantern asks permission for read-only looking** (impact 5, harness): `FIRST_RUN` tells the model to offer the wider
+   look and wait, and the first session gets FIRST_RUN instead of EVERY_SESSION's "never ask for routine reading".
+
+Rig issue, fixed: asked "which Plex is stuck?", the scripted user picked the first option (the desktop app), which sent
+the model down an irrelevant path; the persona now picks the server when a question is about Plex.

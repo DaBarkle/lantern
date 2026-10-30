@@ -130,6 +130,8 @@ def answer(question: dict) -> str:
         return next((l for l in labels if re.search(pattern, l, re.I)), None)
     if re.search(r"phone|notif|ntfy|pushcut|approv", q):
         chosen = pick(r"\b(no|not now|skip|later)\b") or labels[-1]
+    elif "plex" in q:
+        chosen = pick(r"server|container|quadlet") or labels[0]  # the rule and the parents' stream are about the server
     elif question.get("multiSelect"):
         return ", ".join(labels[:2])
     else:
@@ -256,4 +258,5 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
     assert answer({"question": "Is this right?", "options": [{"label": "Change it"}, {"label": "Yes, that's right"}]}) == "Yes, that's right"
+    assert answer({"question": "Which Plex is stuck?", "options": [{"label": "Desktop app"}, {"label": "Plex Media Server (container)"}]}).startswith("Plex Media Server")
     print("ok")
