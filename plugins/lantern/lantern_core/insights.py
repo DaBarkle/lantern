@@ -106,12 +106,15 @@ def unit_secrets() -> list[tuple[str, str, float]]:
     return out
 
 
-def services(caps: dict) -> list[tuple[str, str, float]]:
+def down(caps: dict) -> list[tuple[str, str, float]]:
     """Known services, containers, VMs and local servers that are not up right now."""
+    return [(f"insight/down/{cid}", f"{c['name']} is not running", 5) for cid, c in caps.items()
+            if c.get("check") and discovery.healthy(c["check"]) is False]
+
+
+def failed_units() -> list[tuple[str, str, float]]:
+    """Failed systemd units, user and system scope, with the telling journal lines already read."""
     out = []
-    for cid, c in caps.items():
-        if c.get("check") and discovery.healthy(c["check"]) is False:
-            out.append((f"insight/down/{cid}", f"{c['name']} is not running", 5))
     for scope in (["--user"], []):  # the user's units and the system's (an updater or logrotate failing matters too)
         failed = discovery._run(["systemctl", *scope, "--failed", "--no-legend", "--plain"]).splitlines()
         for line in failed[:5]:
@@ -134,21 +137,61 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
     return out
 
 
+def services(caps: dict) -> list[tuple[str, str, float]]:
+    return down(caps) + failed_units()
+
+
+def timers() -> list[tuple[str, str, float]]:
+    """User timers that were not there at the last run: a job the user (or an installer) scheduled since. The first
+    run only learns the set; a timer stays a finding for its three days on Stage, then is simply known."""
+    lines = discovery._run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"]).splitlines()
+    now = {}
+    for l in lines:
+        parts = l.split()
+        timer = next((p for p in parts if p.endswith(".timer")), "")
+        if timer:
+            now[timer] = " ".join(parts[:3]) if parts and parts[0] not in ("-", "n/a") else "no next run"
+    if not now:
+        return []
+    s = discovery.settings()
+    seen = s.get("timers_seen")
+    if seen is None:
+        discovery.save_settings({**s, "timers_seen": sorted(now)})
+        return []
+    new = sorted(set(now) - set(seen))
+    if new:
+        discovery.save_settings({**discovery.settings(), "timers_seen": sorted(set(seen) | set(now))})
+    return [(f"insight/timer-new/{t}", f"a new scheduled job appeared: {t} (next run {now[t]}); say so once, it may be the user's own doing", 2) for t in new]
+
+
 FRESH_SECONDS = 3600
+LIVE_KINDS = ("failed", "failed-system", "disk", "timer-new")  # cheap enough to re-check at every session start
+
+
+def live() -> list[tuple[str, str, float]]:
+    """The checks that run at every session start even when the hourly scan is fresh: a unit that failed minutes
+    ago must never be reported from an hour-old cache (the flap week said "Resolved: ... now failed")."""
+    return failed_units() + disk() + timers()
 
 
 def run(db, now: float | None = None, force: bool = False) -> list[str]:
-    """Publish every insight to Stage (replacing the last run's) and return their messages, highest first. Checks that
-    ran within the hour are not repeated: a session start must stay quick (git status across big repos takes seconds)."""
+    """Publish every insight to Stage (replacing the last run's) and return their messages, highest first. The slow
+    checks (git status across big repos, health probes) are not repeated within the hour, so a session start stays
+    quick; the cheap ones (failed units, disk, timers) run live every time."""
     s = discovery.settings()
     caps = s.get("capabilities", {})
     if not caps:
         return []
     now = now or time.time()
     if not force and now - s.get("insights_at", 0) < FRESH_SECONDS:
-        return [e["message"] for e in stage.top(db, k=50, now=now) if e["source"] == "insight"]
+        cached = [e for e in stage.top(db, k=100, now=now) if e["source"] == "insight" and e["key"].split("/")[1] not in LIVE_KINDS]
+        found = live()
+        for key, msg, score in found:
+            stage.publish(db, key, "insight", msg, score=score, days=3, now=now)
+        stage.resolve_source(db, "insight", {k for k, _, _ in found} | {e["key"] for e in cached})
+        return [e["message"] for e in stage.top(db, k=100, now=now) if e["source"] == "insight"]
     discovery.save_settings({**discovery.settings(), "insights_at": now})
-    found = repos(caps, now) + disk() + services(caps) + unit_secrets() + backups()
+    found = repos(caps, now) + down(caps) + unit_secrets() + backups() + live()
     found.sort(key=lambda f: -f[2])
     for key, msg, score in found:
         stage.publish(db, key, "insight", msg, score=score, days=3, now=now)

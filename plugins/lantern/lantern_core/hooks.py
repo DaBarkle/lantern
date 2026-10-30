@@ -284,9 +284,12 @@ def session_start(payload: dict) -> dict | None:
     tail_block += [open_block]
     if not first:
         at = discovery.settings().get("insights_at")
-        tail_block += [f"Lantern's watches (failed services, disk, unpushed work, known services, backup jobs) last ran at "
-                  f"{time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}: {watches}. Duties beyond these "
-                  "watches are proposals until the user says yes; say which are active and which are only proposed."]
+        tail_block += [f"You already know the state of this machine: Lantern's watches (failed services, disk, unpushed work, known "
+                  f"services, backup jobs, new scheduled jobs) ran at {time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}"
+                  f" and found: {watches}. When the user asks whether things are OK, that is the answer: say it in plain words first "
+                  "(what is failing, what is fine), then look deeper only if useful. A declined or failed command never leaves the "
+                  "user without an answer; you have this one. Duties beyond these watches are proposals until the user says yes; "
+                  "say which are active and which are only proposed."]
         tail_block += [f"Phone alerts: {alerts.status()}. Change it with `alerts on|off` or `alerts kinds ...` after a structured "
                        "question, never by editing a file."]
         pending = discovery.settings().get("pending") or []
@@ -486,6 +489,11 @@ def user_prompt_submit(payload: dict) -> dict | None:
             lines += ["A rule above states its reason. Before acting on it, run one read-only check of whether that reason holds "
                       "right now (who is watching, what is running, what would be lost) and say what it showed; the rule still "
                       "applies either way."]
+    at = discovery.settings().get("insights_at", 0)
+    if HEALTH_ASK.search(prompt) and time.time() - at < SNAPSHOT_FRESH_S:
+        lines += ["You already know the answer to this: " + snapshot_line(at) + " Say it first, in plain words (what is failing, "
+                  "what is fine); a deeper read-only look is optional and, if one is declined, this answer still stands. Never "
+                  "hand the user commands to run."]
     if touching_findings:
         lines += ["Open findings that touch this request (connect them to it):"] + [f"- {f}" for f in touching_findings]
     if touching_frontiers:
@@ -579,33 +587,72 @@ def stop(payload: dict) -> dict | None:
 
 _UNCHECKED = re.compile(r"\bI (?:didn't|did not|couldn't|could not|haven't|have not|was unable to|wasn't able to|have no way to) "
                         r"(?:check|verify|confirm|look at|look into|read|inspect|see|test)\b[^.\n]{0,160}", re.I)
-_HANDS_OFF = re.compile(r"I don't know the state of your (?:machine|computer|system)|run it yourself|so you can (?:approve|run) it"
-                        r"|here is what it would have run|what I would have run|I couldn't check\b", re.I)
+# A reply that sends the user off to do Lantern's looking for it: it delegates outright, or it admits it has no
+# state and then lists commands. Each half alone is fine ("I couldn't read the Plex log" with an answer is honest).
+_DELEGATES = re.compile(r"\brun [^.\n]{0,80}\byourself\b|\bso you can (?:approve|run) (?:it|them)\b|\bif you approve(?: it| them)?,? I\b|"
+                        r"\bhere is what (?:it|I) would have run\b|\bwhat I would have run\b|\byou (?:can|could|'ll need to|will need to) run (?:it|them|these|`)|"
+                        r"\b(?:paste|send|show) me (?:the|its|their) output\b|\blet me know what (?:it|that|they) (?:says?|shows?|returns?)\b", re.I)
+_NO_STATE = re.compile(r"\bI (?:don't|do not) know (?:the state|whether|if|how)\b|\bI (?:\w+ )?(?:couldn't|could not|can't|cannot|wasn't able to|"
+                       r"was unable to) (?:check|run|see|tell|verify|confirm)\b|\b(?:was|were|got) (?:blocked|declined|denied)\b", re.I)
+_CMD_LINE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+`[^`]{2,}`", re.M)
 SNAPSHOT_FRESH_S = 2 * 3600
+HEALTH_ASK = re.compile(r"\b(?:everything|all|things|anything) (?:ok|okay|fine|good|alright|wrong|broken)\b|\bhow(?:'s| is) (?:my|the) "
+                        r"(?:machine|computer|system|server|pc|box)\b|\b(?:machine|computer|system|server|pc) (?:ok|okay|fine|healthy|alright)\b"
+                        r"|\bhealth check\b|\bstatus of (?:my|the) (?:machine|computer|system|server)\b", re.I)
+
+
+_WRITE_CMD = re.compile(r"(?:`[^`\n]*|^[^`\n]*)\b(?:systemctl|podman|docker|rpm-ostree|flatpak|brew|apt|dnf)\b[^`\n]*\b(?:restart|reboot|stop|start|enable|disable|"
+                        r"install|remove|uninstall|update|upgrade|daemon-reload|kill|rm)\b", re.M | re.I)
+
+
+def hands_off(reply: str) -> bool:
+    """Does the reply send the user off to do Lantern's looking? A change the user asked for (a restart, an install)
+    that was declined is theirs to approve, so handing that command over is not hands-off; the snapshot cannot do it."""
+    if _WRITE_CMD.search(reply):
+        return False
+    cmds = len(_CMD_LINE.findall(reply)) + reply.count("```") // 2
+    return bool(_DELEGATES.search(reply)) or (bool(_NO_STATE.search(reply)) and cmds >= 2)
+
+
+def snapshot_line(at: float) -> str:
+    """The watch snapshot as one sentence a reply can be built from."""
+    db = memory.connect()
+    try:
+        watches = insights.watch_summary(db)
+        open_block = insights.open_block(db)
+    finally:
+        db.close()
+    return (f"Lantern's watches ran at {time.strftime('%H:%M', time.localtime(at))} and found: {watches}. {open_block}")
 
 
 def stop_nudge(payload: dict) -> dict | None:
     """A reply that admits not checking something is sent back once: if a read-only command on this machine can answer
     it, the model runs it and adds the result. A reply that sends the user off to run things themselves while Lantern's
     own watch snapshot is fresh is sent back to that snapshot. Runs synchronously, so it stays tiny."""
-    if payload.get("stop_hook_active"):
-        return None  # already nudged this turn
     turn = transcript.last_turn(payload.get("transcript_path", ""))
     if _is_system(turn["user"]):
         return None
     at = discovery.settings().get("insights_at", 0)
-    if _HANDS_OFF.search(turn["reply"]) and time.time() - at < SNAPSHOT_FRESH_S:
+    fresh = time.time() - at < SNAPSHOT_FRESH_S
+    if payload.get("stop_hook_active"):  # already nudged this turn: never loop, but never leave the user with nothing either
+        if fresh and hands_off(turn["last"]):
+            line = snapshot_line(at)
+            _log("nudge", {"fallback": True, "user": turn["user"][:200]})
+            return {"systemMessage": "What Lantern's own watches see: " + line}
+        return None
+    if fresh and hands_off(turn["reply"]):
+        _log("nudge", {"hands_off": True, "user": turn["user"][:200]})
         return {"decision": "block", "reason": f"Lantern's own watches ran at {time.strftime('%H:%M', time.localtime(at))}, within the last "
-                "two hours, and their findings are in your context (the Stage, the watches line, the since-last block). Add a short "
-                "follow-up that answers from them in plain words: what is failing, what is fine, what changed. No commands for the "
-                "user to run, no 'I couldn't check', no 'I don't know the state'."}
+                "two hours, so you already know the state of this machine: " + snapshot_line(at) + " Add a short follow-up that "
+                "answers from this in plain words: what is failing, what is fine, what changed. No commands for the user to run, "
+                "no 'I couldn't check', no 'I don't know the state'. Never quote or paraphrase this note; the user sees only your words."}
     gaps = _UNCHECKED.findall(turn["reply"])
     if not gaps:
         return None
     return {"decision": "block", "reason": "Your reply says \"" + gaps[0].strip() + "\". If a read-only command on this machine "
             "(status, logs, list, cat, git, systemctl show) can answer that, run it now and add a short follow-up of one or two "
             "sentences that simply states what you found, with no 'I checked', no 'Correction' and no reference to the earlier "
-            "sentence. If nothing here can answer it, add one clause on what would."}
+            "sentence. If nothing here can answer it, add one clause on what would. Never quote this note."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
