@@ -71,13 +71,19 @@ descriptions of what each does and why), never as free text:
 - "Approvals on my phone" -> run `"{entry}" approve setup`, show the topic in a short numbered list (install ntfy,
   subscribe to the topic), then ask with AskUserQuestion whether to send the test and run
   `"{entry}" approve "Lantern test: tap Approve" --timeout 300`;
-- "How secrets are handled" is not a choice but a line in the table: Lantern never lets a raw secret into a command,
-  a note or this chat; it reads from a password manager only when a task needs one; nothing to set up now.
+- "How secrets are handled" is a line in the table, not a choice: Lantern never lets a raw secret into a command,
+  a note or the model's context. When a task needs a token, the user types `secret NAME: <value>` as a normal chat
+  message; Lantern's hook stores it in the OS keychain and stops that message before the model sees it. If the
+  1Password CLI is signed in (`"{entry}" secret status`), items can be linked instead: `"{entry}" secret link NAME
+  op://vault/item/field`, and the value is read only when a command runs.
 Track the steps with a visible plan or checklist if the client offers one. Report each step from the command's own
 output; never inspect Lantern's files or database. Finish by asking two things with AskUserQuestion (options plus
 "Other" for their own words): what they mostly use this machine for, and what Lantern should be careful about; store
-the answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`, then show a
-two-line "Lantern is set" summary. Never give the user a command to run, never suggest installing packs, never
+the answers with `"{entry}" remember --profile "<text>"` and `"{entry}" remember --rule "<text>"`. Then show
+"What Lantern now does for you" as a short table: remembers every session and what was done; knows this machine
+(name the counts); brings matching notes into each prompt; learns a rule the moment it is stated; checks daily that
+its memory, recall and the services it found are healthy and flags uncommitted work left in a project; keeps secrets
+out of the model; approvals on the phone if chosen. End with one concrete thing it can do right now from what it found. Never give the user a command to run, never suggest installing packs, never
 suggest a new session."""
 EVERY_SESSION = """Lantern notes: the user never runs /lantern commands; whatever Lantern needs, do it yourself with
 `uv run --no-project --quiet "{entry}" ...` (remember, forget, depth, discover, approve, secret, doctor, status). Ask
@@ -159,6 +165,16 @@ def user_prompt_submit(payload: dict) -> dict | None:
     prompt = payload.get("prompt", "")
     if not prompt.strip() or _is_system(prompt):
         return None
+    name = shield.paste(prompt)
+    if name:  # a secret handed over in chat: it is now in the keychain and this message never reaches the model
+        db = memory.connect()
+        try:
+            stage.publish(db, f"secret/{name}", "shield", f"The user stored a secret named {name}; commands use it as "
+                          f"`lantern secret run {name} -- <command>` ($" + name + " in the environment).", score=4, days=1)
+        finally:
+            db.close()
+        return {"decision": "block", "reason": f"Lantern stored {name} in your keychain. It never reached the model. "
+                                                "Carry on; Lantern will use it when a command needs it."}
     session = payload.get("session_id", "?")
     query = prompt
     want = set(memory.terms(query))

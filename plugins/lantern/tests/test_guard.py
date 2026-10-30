@@ -168,3 +168,25 @@ class ApprovalsTest(unittest.TestCase):
             a, b = approvals.config(), approvals.config()
             self.assertEqual(a, b)
             self.assertGreater(len(a["topic"]), 25)
+
+
+class SecretHandoverTest(unittest.TestCase):
+    def test_pasted_secret_is_stored_and_never_reaches_the_model(self):
+        from lantern_core import stage
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            calls = []
+
+            def fake_run(cmd, **kw):
+                calls.append((cmd, kw.get("input")))
+                return mock.Mock(returncode=0)
+            with mock.patch.object(shield.subprocess, "run", side_effect=fake_run):
+                reply = hooks.user_prompt_submit({"prompt": "secret PLEX_TOKEN: abc123XYZtoken", "session_id": "s"})
+            self.assertEqual(reply["decision"], "block")
+            self.assertIn("PLEX_TOKEN", reply["reason"])
+            self.assertNotIn("abc123XYZtoken", json.dumps(reply))
+            self.assertEqual(calls[0][1], "abc123XYZtoken")  # handed to `secret set` on stdin
+            self.assertIn("PLEX_TOKEN", calls[0][0])
+            db = memory.connect()
+            self.assertIn("PLEX_TOKEN", stage.top(db)[0]["message"])
+            db.close()
+            self.assertIsNone(shield.paste("tell me a secret: how does plex work"))

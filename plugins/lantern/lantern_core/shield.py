@@ -7,6 +7,7 @@ Values live in the OS keychain (macOS Keychain, Windows Credential Manager, Linu
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -90,10 +91,59 @@ def _reexec_with_keyring(argv: list[str]) -> int:
     return subprocess.call(["uv", "run", "--no-project", "--quiet", "--with", "keyring", script, *argv])
 
 
+def _links_file():
+    return ensure_data_dir() / "secret-links.json"
+
+
+def links() -> dict:
+    """NAME -> a password-manager reference (op://vault/item/field): the value is fetched when a command runs."""
+    try:
+        return json.loads(_links_file().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def manager_status() -> dict:
+    """What can hold secrets here: the 1Password CLI (and whether it is signed in) and the OS keychain."""
+    op = shutil.which("op")
+    signed_in = False
+    if op:
+        try:
+            signed_in = subprocess.run([op, "whoami"], capture_output=True, text=True, timeout=10).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return {"op": bool(op), "op_signed_in": signed_in, "keychain": _keyring() is not None or shutil.which("uv") is not None,
+            "stored": names(), "linked": links()}
+
+
+PASTE = re.compile(r"^\s*secret\s+([A-Za-z][A-Za-z0-9_]{0,63})\s*[:=]\s*(\S{4,})\s*$")
+
+
+def paste(prompt: str) -> str | None:
+    """A prompt of the form `secret NAME: value` is a hand-over: store the value in the keychain and return NAME, so the
+    hook can stop the prompt before it reaches the model. The value is never printed or logged."""
+    m = PASTE.match(prompt)
+    if not m:
+        return None
+    name, value = m.group(1), m.group(2)
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lantern.py")
+    r = subprocess.run(["uv", "run", "--no-project", "--quiet", "--with", "keyring", script, "secret", "set", name],
+                       input=value, capture_output=True, text=True, timeout=60, env={**os.environ, "LANTERN_HOME": str(ensure_data_dir())})
+    return name if r.returncode == 0 else None
+
+
 def cli(argv: list[str]) -> int:
-    """lantern secret set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME"""
+    """lantern secret set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME | link NAME op://vault/item/field | status"""
     if argv[:1] == ["list"]:
-        print("\n".join(names()))
+        print("\n".join(sorted(set(names()) | set(links()))))
+        return 0
+    if argv[:1] == ["status"]:
+        st = manager_status()
+        print(json.dumps({**st, "stored": len(st["stored"]), "linked": len(st["linked"])}))
+        return 0
+    if argv[:1] == ["link"] and len(argv) == 3 and argv[2].startswith("op://"):
+        _links_file().write_text(json.dumps({**links(), argv[1]: argv[2]}))
+        print(f"{argv[1]} will be read from 1Password when a command needs it")
         return 0
     kr = _keyring()
     if kr is None:
@@ -116,8 +166,11 @@ def cli(argv: list[str]) -> int:
         env = dict(os.environ)
         for name in ",".join(argv[1:split]).split(","):
             value = kr.get_password(SERVICE, name)
+            if value is None and name in links():
+                r = subprocess.run(["op", "read", links()[name]], capture_output=True, text=True)
+                value = r.stdout.strip() if r.returncode == 0 else None
             if value is None:
-                print(f"lantern: no secret named {name!r}; add it with `lantern secret set {name}`", file=sys.stderr)
+                print(f"lantern: no secret named {name!r}; hand it over in chat as `secret {name}: <value>`", file=sys.stderr)
                 return 1
             env[name] = value
         return subprocess.call(argv[split + 1:], env=env)
