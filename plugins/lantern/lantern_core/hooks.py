@@ -100,8 +100,14 @@ it. If they ask whether Lantern is working or what it knows, answer from this co
 Findings on the Stage were checked within the last hour; when you recommend an order of fixes, rank verified data
 loss and verified secret exposure first, services down next, drift and unpinned code after, cosmetic last, and say what
 each would free or prevent; at most three numbered, the rest as "plus N smaller". Never say "I'd check" or
-"unconfirmed" about something you can read now: read it in this turn (read-only) and say what you found. A finding that
-disappeared is explained by the since-last-session line; never say it "dropped off". Known
+"unconfirmed" about something you can read now: read it in this turn (read-only) and say what you found; before saying
+you cannot verify something, look for file evidence (state files, logs, last-run stamps, artifact dates) and cite it.
+Before proposing any fix, check it against the user's rules, the pending defaults above and the other open findings:
+a fix that moves personal or finance data to another machine, or that worsens another finding, is ordered after the
+fix that removes the risk, and said so. A finding that disappeared is explained by the since-last-session line; never
+say it "dropped off". Open a session-two reply with one line on what changed since last time (from the since-last line
+and where the last session left off), then the answer. Speak in the first person about your own earlier scan ("my scan
+earlier found"), never as if another agent did it. Known
 benign look-alikes: a Plex claim token expires in minutes; /home is /var/home on Fedora Atomic (one volume). Before
 proposing to push anything to a remote, prefer a backup the user already has and say a secret scan comes first.
 After any task, end by offering the next useful thing in one line, drawn from what Lantern knows."""
@@ -137,6 +143,7 @@ def session_start(payload: dict) -> dict | None:
             previous = memory.ledger_last(db, session, RESUME_HOURS * 3600)
         tail = memory.last_session(db, session, RESUME_HOURS * 3600)
         learned = memory.learned_since(db, previous["updated"] if previous else time.time() - 7 * 86400)
+        no_rules = not memory.rules(db, 2000)
         # After a compaction or resume the details of this session are no longer in view: bring back its working memory.
         own = memory.session_turns(db, session) if payload.get("source") in ("compact", "resume") else []
         own_ledger = memory.ledger_get(db, session) if own else None
@@ -155,6 +162,17 @@ def session_start(payload: dict) -> dict | None:
     machine = discovery.summary()
     if machine:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
+        lines += ["Lantern is watching, hourly: failed services, disk running short, uncommitted or unpushed project work, "
+                  "and the services it knows (daily). Say 'Lantern is watching ...' only in those words; it is true."]
+    for snippet in discovery.readme_snippets():
+        lines += [f"In the user's own words (README of a recent project): {snippet}"]
+    level = discovery.expertise()
+    lines += ["Write for an expert: paths, units and line numbers inline, mechanism stated plainly." if level == "expert" else
+              "Write for a non-technical reader: consequence first in plain words, mechanism in one clause, paths in a trailing details line."]
+    if not first and not profile and no_rules:
+        lines += ["Open loop: the user has not yet said what this machine is for or chosen any guardrail. Assume until told: "
+                  "personal and finance folders never leave this machine; ask before restarting a service or changing the OS. "
+                  "Re-ask at most one of those questions, with that default stated."]
     progress = survey.status()
     if progress:
         lines += ["", progress]

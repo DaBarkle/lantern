@@ -350,8 +350,8 @@ class InsightsTest(unittest.TestCase):
                 line = insights.diff_since_last({f"insight/repo-noremote/{clean}"})
             self.assertIn("1 finding(s) resolved", line)
             self.assertIn("dirty: now clean, still no remote", line)  # a vanished finding is explained, never dropped
-            self.assertTrue(any("dirty has 1 uncommitted change(s) and no remote" in m for m in msgs), msgs)
-            self.assertTrue(any("clean is active but has no remote" in m for m in msgs), msgs)
+            self.assertTrue(any("dirty has 1 uncommitted change(s) and no git remote" in m for m in msgs), msgs)
+            self.assertTrue(any("clean is active but has no git remote" in m for m in msgs), msgs)
             self.assertEqual({e["source"] for e in stage.top(db, k=10)}, {"insight"})
             db.close()
 

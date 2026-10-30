@@ -133,6 +133,59 @@ def scout_apps() -> list[dict]:
     return out
 
 
+ALERT_WORDS = {"ntfy": "ntfy", "pushcut": "Pushcut", "gotify": "Gotify", "pushover": "Pushover", "telegram": "Telegram",
+               "discord.com/api/webhooks": "Discord webhook", "hooks.slack.com": "Slack webhook"}
+
+
+def scout_alerts() -> list[dict]:
+    """Ways this machine already reaches the user's phone or chat, from unit files and configs (names only)."""
+    found: dict[str, str] = {}
+    for folder in (Path.home() / ".config" / "systemd" / "user", Path.home() / ".config"):
+        for f in list(folder.glob("*.service"))[:300] + list(folder.glob("*/*.yaml"))[:200] + list(folder.glob("*/*.json"))[:200]:
+            try:
+                text = f.read_text(errors="replace")[:200000].lower()
+            except OSError:
+                continue
+            for word, name in ALERT_WORDS.items():
+                if word in text:
+                    found.setdefault(name, f.name)
+    return [{"id": f"alert:{name}", "kind": "alert-channel", "name": name, "detail": f"seen in {where}", "check": None}
+            for name, where in found.items()]
+
+
+def readme_snippets(limit: int = 2) -> list[str]:
+    """The opening of the README of the most recently worked-on projects: what the user is building, in their words."""
+    caps = settings().get("capabilities", {})
+    repos = []
+    for cid in caps:
+        if cid.startswith("repo:"):
+            d = Path(cid[5:])
+            last = _run(["git", "-C", str(d), "log", "-1", "--format=%ct"]).strip()
+            repos.append((int(last) if last.isdigit() else 0, d))
+    out = []
+    for _, d in sorted(repos, reverse=True)[:limit]:
+        for name in ("README.md", "readme.md", "README"):
+            try:
+                text = (d / name).read_text(errors="replace")
+            except OSError:
+                continue
+            body = " ".join(l.strip("# ").strip() for l in text.splitlines()[:12] if l.strip())[:400]
+            if body:
+                out.append(f"{d.name}: {body}")
+            break
+    return out
+
+
+def expertise() -> str:
+    """A reader level inferred from the machine: someone running services and many dev tools is an expert."""
+    s = settings()
+    if s.get("expertise"):
+        return s["expertise"]
+    caps = s.get("capabilities", {})
+    kinds = [c.split(":", 1)[0] for c in caps]
+    return "expert" if kinds.count("tool") >= 8 or kinds.count("service") + kinds.count("container") >= 3 else "general"
+
+
 def scout_tools() -> list[dict]:
     out = []
     for t in DEV_TOOLS:
@@ -220,7 +273,7 @@ def scout_vpn() -> list[dict]:
             for t in ("tailscale", "wg", "zerotier-cli") if _which(t)]
 
 
-SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets],
+SCOUTS = {2: [scout_system, scout_repos, scout_tools, scout_secrets, scout_alerts],
           3: [scout_containers, scout_vms, scout_services, scout_apps, scout_ssh_hosts, scout_ports, scout_vpn]}
 
 
@@ -283,7 +336,7 @@ PACKS = {"docker": "lantern-docker", "podman": "lantern-docker", "tailscale": "l
 
 KIND_LABELS = {"machine": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
                "service": "services", "app": "apps", "ssh-host": "SSH hosts", "local-service": "local servers", "vpn": "VPN",
-               "secret-manager": "password managers"}
+               "secret-manager": "password managers", "alert-channel": "alert channels"}
 
 
 def describe(finds: list[dict]) -> str:
@@ -307,7 +360,7 @@ def summary() -> str:
     for cid, c in caps.items():
         kinds.setdefault(cid.split(":", 1)[0], []).append(c["name"])
     labels = {"system": "machine", "repo": "projects", "tool": "dev tools", "container": "containers", "vm": "virtual machines",
-              "service": "services", "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers"}
+              "service": "services", "app": "apps", "ssh": "SSH hosts", "port": "local servers", "vpn": "VPN", "secrets": "password managers", "alert": "alert channels to the user"}
     parts = []
     for k, names in kinds.items():
         if k == "system":

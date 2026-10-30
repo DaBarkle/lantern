@@ -74,3 +74,24 @@ class HostExecTest(unittest.TestCase):
                 mock.patch.object(discovery.subprocess, "run", side_effect=fake):
             discovery._run(["systemctl", "--user", "list-units"])
         self.assertEqual(calls[-1][:2], ["/usr/bin/distrobox-host-exec", "systemctl"])
+
+
+class SignalsTest(unittest.TestCase):
+    def test_alert_channels_readme_and_expertise(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(discovery.Path, "home", return_value=Path(d)):
+            units = Path(d) / ".config" / "systemd" / "user"
+            units.mkdir(parents=True)
+            (units / "guardian.service").write_text("[Service]\nExecStart=/x/guardian --notify https://ntfy.sh/topic\n")
+            found = discovery.scout_alerts()
+            self.assertEqual([f["name"] for f in found], ["ntfy"])
+            repo = Path(d) / "proj"; repo.mkdir()
+            import subprocess
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / "README.md").write_text("# Proj\n\nA tool that makes AirPods work on Linux.\n")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x"], check=True)
+            discovery.accept([{"id": f"repo:{repo}", "kind": "repo", "name": "proj", "detail": "", "check": None}]
+                             + [{"id": f"tool:{t}", "kind": "tool", "name": t, "detail": "", "check": None} for t in "abcdefgh"])
+            self.assertIn("proj: Proj A tool that makes AirPods work on Linux.", discovery.readme_snippets()[0])
+            self.assertEqual(discovery.expertise(), "expert")
