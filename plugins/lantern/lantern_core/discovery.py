@@ -59,6 +59,21 @@ def save_settings(s: dict) -> None:
     settings_path().write_text(json.dumps(s, indent=2))
 
 
+def update_settings(**kv) -> dict:
+    """Change only these keys, under a file lock, re-reading first: a background job that scouted for minutes must not
+    write its stale copy over what a session start saved meanwhile (insights, insights_at, pending)."""
+    lock = settings_path().with_suffix(".lock")
+    with open(lock, "w") as fh:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass  # Windows or an odd filesystem: best effort, same as before
+        s = {**settings(), **kv}
+        save_settings(s)
+    return s
+
+
 def _which(name: str) -> str | None:
     """Where a tool is, on this machine or on the host behind a container."""
     found = None if (HOST_EXEC and name in HOST_TOOLS) else shutil.which(name)
@@ -391,8 +406,6 @@ def card(find: dict) -> str:
 
 def accept(finds: list[dict]) -> None:
     """Write capability cards to memory (replacing older cards for the same find) and register their checks."""
-    s = settings()
-    caps = s.setdefault("capabilities", {})
     db = memory.connect()
     try:
         for f in finds:
@@ -400,10 +413,10 @@ def accept(finds: list[dict]) -> None:
             for (old,) in db.execute("SELECT id FROM items WHERE source=? AND status='active'", (source,)).fetchall():
                 memory.supersede(db, old)
             memory.add(db, "fact", source, card(f))
-            caps[f["id"]] = {"name": f["name"], "check": f["check"]}
     finally:
         db.close()
-    save_settings(s)
+    caps = {**settings().get("capabilities", {}), **{f["id"]: {"name": f["name"], "check": f["check"]} for f in finds}}
+    update_settings(capabilities=caps)  # only this key: a session start may have written insights meanwhile
     from . import packs
     packs.for_finds(finds)  # a pack switches on the moment its system is found: no install, no restart
 
@@ -512,7 +525,7 @@ def frontiers() -> list[dict]:
 def refresh_frontiers() -> list[dict]:
     """Recompute and cache the frontiers (a session start and each discovery run), so the prompt hook reads a file, not CLIs."""
     fs = frontiers()
-    save_settings({**settings(), "frontiers": fs})
+    update_settings(frontiers=fs)
     return fs
 
 
@@ -539,7 +552,7 @@ def auto(now: float | None = None) -> list[dict]:
     s = settings()
     known = s.get("capabilities", {})
     finds = [f for f in discover(min(3, s.get("depth", 2))) if f["id"] not in known]
-    save_settings({**settings(), "walls": list(WALLS)})
+    update_settings(walls=list(WALLS))
     if not finds:
         refresh_frontiers()
         return []

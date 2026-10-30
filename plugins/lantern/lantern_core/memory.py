@@ -215,7 +215,8 @@ _SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or versio
 _LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
                    r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
                    r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me (?:if|which|whether)|Say (?:the word|which|yes|go)|If you want me to|"
-                   r"The (?:most useful )?next step|Still (?:waiting|open)|Waiting (?:on|for) you|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?))")
+                   r"The (?:most useful )?next step|Still (?:waiting|open)|Waiting (?:on|for) you|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?)|("
+                   + _SENT + r"{3,160}\b(?:looks|seems|appears|is|are) (?:stuck|frozen|wedged|stalled|hung|unexplained|still failing)\b" + _SENT + r"{0,120}))")
 
 
 _HEDGE = re.compile(r"\b(?:guess\w*|couldn't|could not|can't (?:confirm|verify|tell|check|read)|cannot (?:confirm|verify|tell|check|read)|unverified|"
@@ -242,7 +243,7 @@ def carry(text: str, limit: int) -> str:
 def open_loops(reply: str, limit: int = 8) -> list[str]:
     """Promises, gaps, offers and questions the assistant stated in its reply ("I didn't check X", "Next, I can Y",
     "Should I Z?"), so the next session closes or re-asks them instead of repeating them."""
-    return [(m.group(1) or m.group(2)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+    return [(m.group(1) or m.group(2) or m.group(3)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
 
 
 _GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before "
