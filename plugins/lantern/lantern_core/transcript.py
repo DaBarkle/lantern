@@ -5,6 +5,7 @@ from pathlib import Path
 
 TAIL_BYTES = 4_000_000  # a long session's transcript runs to hundreds of MB; the last turns are all a hook needs
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+HOOK_FEEDBACK = ("Stop hook feedback:", "[Request interrupted by user")
 
 
 def _text(content) -> str:
@@ -43,7 +44,7 @@ def messages(path: str | Path) -> list[tuple[str, str]]:
     out = []
     for e in _entries(path):
         text = _text(e.get("message", {}).get("content")).strip()
-        if text:
+        if text and not (e["type"] == "user" and text.startswith(HOOK_FEEDBACK)):
             out.append((e["type"], text))
     return out
 
@@ -57,7 +58,7 @@ def last_turn(path: str | Path) -> dict:
         text = _text(content).strip()
         blocks = content if isinstance(content, list) else []
         if e["type"] == "user":
-            if text:
+            if text and not text.startswith(HOOK_FEEDBACK):  # a Stop hook's reason is written back as a user entry; the turn goes on
                 turn = {"user": text, "reply": [], "files": [], "commands": [], "agents": [], "failed": 0}
             turn["failed"] += sum(1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error"))
             continue
