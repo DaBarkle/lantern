@@ -112,8 +112,8 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["doctor"]:
         return doctor.cli()
     if argv == ["status"]:
-        from lantern_core import status
-        print(status.line())
+        from lantern_core import statusline
+        return statusline.cli()
         return 0
     if argv[:1] == ["stage"]:
         return stage_cli(argv[1:])

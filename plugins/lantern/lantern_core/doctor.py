@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from . import discovery, memory, resources, semantic, shield, stage
+from . import discovery, memory, resources, semantic, shield, stage, statusline
 from .paths import ensure_data_dir
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -128,7 +128,12 @@ def check_resources():
     return OK, "memory headroom ok" if free is None else f"{free:,} MB free"
 
 
-CHECKS = {"data-dir": check_data_dir, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
+def check_status_line():
+    status, msg, _ = statusline.ensure()  # repairs a stale command itself, as with the memory server
+    return (OK if status == "ok" else WARN), msg
+
+
+CHECKS = {"data-dir": check_data_dir, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
           "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "resources": check_resources}
 
 
