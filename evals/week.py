@@ -3,6 +3,7 @@
 critic scores the multi-day promises: watches, open loops, rules honoured, "since last session" accuracy.
 
 Usage: uv run --no-project evals/week.py <probe folder with .lantern.json> [default|flap|nontech]
+WEEK_PLUGIN=<other checkout>/plugins/lantern measures that checkout instead; WEEK_SLOTS caps weeks side by side (3).
 Sessions run the way the desktop app runs them (evals/session.py): a long-lived process per day with the full tool set,
 every hook firing, the question tool answered by a scripted user, shell commands allowed when read-only or Lantern's
 own, edits kept inside the probe folder. The plugin measured is this checkout (--plugin-dir), never the installed copy.
@@ -25,6 +26,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 import zlib
@@ -35,12 +37,13 @@ import fcntl
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from session import Session  # noqa: E402
 
-PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "lantern"  # the checkout under test
+PLUGIN = Path(os.environ.get("WEEK_PLUGIN") or Path(__file__).resolve().parents[1] / "plugins" / "lantern")  # the checkout under test
 LANTERN = PLUGIN / "lantern.py"
 BASE = Path.home() / ".claude" / "plugins" / "data" / "lantern-inline"  # Claude Code's data folder for a --plugin-dir plugin
 POINTER = Path.home() / ".local" / "share" / "lantern" / "data-dir"  # the hooks point shell `lantern` commands here; restored after
 MIN_FREE_MB = 6000
-SLOTS = int(os.environ.get("WEEK_SLOTS", "1"))  # weeks allowed side by side on this machine; raise only with the owner's OK
+SLOTS = int(os.environ.get("WEEK_SLOTS", "3"))  # weeks allowed side by side (owner's decision 2026-10-31: as many as fit, never an OOM)
+ABORT_MB = 3000  # if available memory falls under this, the newest week aborts itself and tears down
 PER_WEEK_MB = 3000  # measured 2026-10-31: a sim memory server grows to ~0.9 GB, its session and survey ~0.5 GB; 3 GB keeps a margin
 HEADLESS = re.compile(r"no shell|question tool|only (?:lets me )?read files|can only read|couldn't read the journal|isn't available this session"
                       r"|without a shell|once I have a shell", re.I)
@@ -51,11 +54,19 @@ NEVER = re.compile(r"tailscale|virsh (?!list|dom(?:info|state|blk)|net-list|pool
                    r"|podman (?:rm|rmi|stop|kill|restart|pull|run|exec|image (?:rm|prune)|system prune)|rm -rf|rpm-ostree (?!status)|ssh |scp |nmcli", re.I)
 
 
-def available_mb() -> int:
+def meminfo(key: str) -> int:
     for line in Path("/proc/meminfo").read_text().splitlines():
-        if line.startswith("MemAvailable:"):
+        if line.startswith(key + ":"):
             return int(line.split()[1]) // 1024
     return 0
+
+
+def available_mb() -> int:
+    return meminfo("MemAvailable")
+
+
+def swap_used_mb() -> int:
+    return meminfo("SwapTotal") - meminfo("SwapFree")
 
 
 def lantern(data: Path, *args: str) -> str:
@@ -125,17 +136,44 @@ def acquire_slot():
                 fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
-            if available_mb() >= MIN_FREE_MB + PER_WEEK_MB * running:
+            swap0 = swap_used_mb()
+            time.sleep(10)
+            room = available_mb() - PER_WEEK_MB >= MIN_FREE_MB  # this week's footprint still leaves the floor
+            if room and swap_used_mb() <= swap0 + 50:  # and the machine is not already swapping harder
+                h.seek(0)
+                h.truncate()
+                h.write(f"{time.time()}\n")
+                h.flush()  # the watchdog aborts the newest week first
                 return h
             fcntl.flock(h, fcntl.LOCK_UN)
             if waited == 0:
-                print(f"{running} week(s) running and {available_mb()} MB available; waiting for headroom", file=sys.stderr, flush=True)
+                print(f"{running} week(s) running, {available_mb()} MB available, swap {swap0} MB; waiting for headroom", file=sys.stderr, flush=True)
             break
         else:
             if waited == 0:
                 print(f"all {SLOTS} week slot(s) taken; waiting (one memory server per week)", file=sys.stderr, flush=True)
         time.sleep(15)
     sys.exit("gave up after two hours waiting for a week slot")
+
+
+def watchdog(my_start: float) -> None:
+    """Every 15 s: if available memory is under ABORT_MB and this is the newest running week, stop it (SIGTERM runs teardown)."""
+    lockdir = Path.home() / ".local" / "share" / "lantern"
+    while True:
+        time.sleep(15)
+        if available_mb() >= ABORT_MB:
+            continue
+        starts = []
+        for f in lockdir.glob("week.lock*"):
+            try:
+                starts.append(float(f.read_text().strip() or 0))
+            except (OSError, ValueError):
+                pass
+        if my_start >= max(starts, default=my_start):
+            print(f"available memory {available_mb()} MB is under {ABORT_MB} MB; aborting this week (the newest) to protect the machine",
+                  file=sys.stderr, flush=True)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
 
 
 def start_server(data: Path) -> subprocess.Popen:
@@ -232,6 +270,8 @@ def main(folder: str, name: str = "default"):
     profile = json.loads((cwd / ".lantern.json").read_text())["profile"]
     data = BASE / "profiles" / profile
     slot = acquire_slot()  # noqa: F841  (held until the process exits)
+    slot.seek(0)
+    threading.Thread(target=watchdog, args=(float(slot.read().strip() or time.time()),), daemon=True).start()
     pointer_before = POINTER.read_text() if POINTER.exists() else None
     if data.exists():
         shutil.rmtree(data)  # every week starts as a new user...
