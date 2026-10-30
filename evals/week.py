@@ -125,7 +125,7 @@ def acquire_slot():
     """One of SLOTS exclusive locks, taken only when the machine has MIN_FREE_MB plus PER_WEEK_MB per week already running.
     Waits up to two hours. Returns the open lock handle (keep it alive for the whole week)."""
     lockdir = Path.home() / ".local" / "share" / "lantern"
-    handles = [open(lockdir / ("week.lock" if i == 0 else f"week.lock.{i}"), "w") for i in range(SLOTS)]
+    handles = [open(lockdir / ("week.lock" if i == 0 else f"week.lock.{i}"), "a+") for i in range(SLOTS)]  # a+ : never truncate another week's stamp
     for waited in range(0, 7200, 15):
         reaped = reap_orphans()
         if reaped:
@@ -140,11 +140,12 @@ def acquire_slot():
             time.sleep(10)
             room = available_mb() - PER_WEEK_MB >= MIN_FREE_MB  # this week's footprint still leaves the floor
             if room and swap_used_mb() <= swap0 + 50:  # and the machine is not already swapping harder
+                started = time.time()
                 h.seek(0)
                 h.truncate()
-                h.write(f"{time.time()}\n")
+                h.write(f"{started}\n")
                 h.flush()  # the watchdog aborts the newest week first
-                return h
+                return h, started
             fcntl.flock(h, fcntl.LOCK_UN)
             if waited == 0:
                 print(f"{running} week(s) running, {available_mb()} MB available, swap {swap0} MB; waiting for headroom", file=sys.stderr, flush=True)
@@ -269,9 +270,8 @@ def main(folder: str, name: str = "default"):
     cwd = Path(folder)
     profile = json.loads((cwd / ".lantern.json").read_text())["profile"]
     data = BASE / "profiles" / profile
-    slot = acquire_slot()  # noqa: F841  (held until the process exits)
-    slot.seek(0)
-    threading.Thread(target=watchdog, args=(float(slot.read().strip() or time.time()),), daemon=True).start()
+    slot, started = acquire_slot()  # noqa: F841  (the handle is held until the process exits)
+    threading.Thread(target=watchdog, args=(started,), daemon=True).start()
     pointer_before = POINTER.read_text() if POINTER.exists() else None
     if data.exists():
         shutil.rmtree(data)  # every week starts as a new user...
