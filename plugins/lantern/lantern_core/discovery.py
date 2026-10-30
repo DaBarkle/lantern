@@ -613,6 +613,8 @@ def auto(now: float | None = None) -> list[dict]:
     known = s.get("capabilities", {})
     finds = [f for f in discover(min(3, s.get("depth", 2))) if f["id"] not in known]
     update_settings(walls=list(WALLS))
+    from . import jobs
+    jobs.mark("discover", "done", now)  # whoever called (the daily job, a first session, `depth 3`): the day's scouting is done
     if not finds:
         refresh_frontiers()
         return []

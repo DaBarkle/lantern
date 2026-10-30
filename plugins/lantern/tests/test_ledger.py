@@ -390,7 +390,7 @@ class JobsTest(unittest.TestCase):
                     mock.patch.object(hooks.jobs, "start", jobs.real_start):
                 hooks.session_start({"session_id": "s1", "source": "startup"})
                 hooks.session_start({"session_id": "s2", "source": "startup"})  # already started: not again
-            self.assertEqual([c[-3] for c in spawned], ["curate", "doctor", "discover"])
+            self.assertEqual([c[-3] for c in spawned], ["curate", "doctor"])  # the first session scouted itself: discover is done for today
             self.assertIn("--data", spawned[0])
             for j in ("curate", "doctor", "discover"):
                 jobs.mark(j, "done")
@@ -421,6 +421,19 @@ class DoctorRepairTest(unittest.TestCase):
                 mock.patch.object(hooks.semantic, "search", return_value=None), mock.patch.object(doctor, "start_server") as start:
             hooks.user_prompt_submit({"session_id": "s", "prompt": "what did we decide about the backup schedule last week"})
             self.assertEqual(start.call_count, 1)
+
+
+class ScoutingLineTest(unittest.TestCase):
+    def test_scouting_is_announced_when_the_daily_discover_starts(self):
+        from lantern_core import discovery, hooks, jobs
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            discovery.save_settings({"depth": 2, "answered_at": 1.0})  # not a first session
+            with mock.patch.object(jobs, "start", return_value=["discover"]):
+                out = hooks.session_start({"source": "startup", "session_id": "s", "cwd": d})
+            self.assertIn("Scouting now", json.dumps(out))
+            with mock.patch.object(jobs, "start", return_value=[]):
+                out = hooks.session_start({"source": "startup", "session_id": "s", "cwd": d})
+            self.assertNotIn("Scouting now", json.dumps(out))
 
 
 class AutoDiscoveryTest(unittest.TestCase):

@@ -172,14 +172,18 @@ def session_start(payload: dict) -> dict | None:
                     memory.add(db0, "rule", "seeded", rule)
         finally:
             db0.close()
-    elif payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
-        jobs.start(jobs.due(), entry)
+    started = []
+    if not first and payload.get("source") not in ("compact", "resume"):  # learning and health run by themselves, once a day
+        started = jobs.start(jobs.due(), entry)
     if resources.can_spawn():
         doctor.start_server()  # idle servers exit; each session brings one back (a no-op while one is up)
     if payload.get("source") not in ("compact", "resume"):
         capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
     packs.sync()  # active packs' skills stay current with the plugin, and the skills folder exists for the session's watcher
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
+    if "discover" in started:  # background work is visible: the user never wonders what is running
+        lines.append(f"Scouting now: Lantern is looking over this machine again in the background (depth {discovery.settings().get('depth', 2)}, "
+                     "read-only). Say so in one short line in your reply; new finds appear on Stage at the next session start.")
     if payload.get("source") not in ("compact", "resume"):
         _, msg, changed = statusline.ensure()  # the per-turn signal sets itself up; the user edits nothing
         if changed:
