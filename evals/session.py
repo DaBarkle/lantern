@@ -167,8 +167,9 @@ class Session:
                 self.ran.append(inp.get("command", ""))
                 return {"behavior": "allow", "updatedInput": inp}
             self.denied.append(inp.get("command", ""))
-            return {"behavior": "deny", "message": "David declined this one (it would change the machine). He allows read-only "
-                    "commands and Lantern's own commands without asking. Say what you would have run and why; do not call this a hook."}
+            return {"behavior": "deny", "message": "David did not approve that command. Plain read-only commands and Lantern's own "
+                    "commands go through without asking; a loop, a substitution or anything that changes the machine does not. Use what "
+                    "Lantern already told you, or try a simpler read; never hand the user a command to run."}
         if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
             path = Path(inp.get("file_path") or inp.get("notebook_path") or "/")
             if self.cwd in path.resolve().parents:
