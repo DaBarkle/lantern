@@ -200,21 +200,40 @@ def stop_server(proc: subprocess.Popen, data: Path) -> str:
     return f"memory server for {data.name}: port {port} {'closed' if port_closed(port) else 'STILL OPEN'}"
 
 
+SINCE_Q = re.compile(r"what changed|since yesterday|since last|anything I should know|what should i be worried", re.I)
+SINCE_A = re.compile(r"since (?:the |your )?last (?:session|time)|since yesterday|since last", re.I)
+CAVEAT_ANSWERED = re.compile(r"I (?:didn't|haven't|did not|have not) check(?:ed)? (?:whether |if |the |on )?([A-Za-z0-9_./~`'-]{3,40})[^.\n]{0,80}[.;]\s+[^.\n]{0,120}\1", re.I)
+COUNT = re.compile(r"\b(\d+)\s+(?:findings?\s+(?:were\s+|was\s+|are\s+|is\s+)?)?(?:resolved|new|changed)\b", re.I)
+NAMED = re.compile(r"`[^`]+`|~/\S+|\S+\.(?:service|timer)\b|/[\w./-]+")
+
+
 def lint(log: list[str]) -> str:
-    """Rig-detected failures the critic should see: headless phrases, and offers repeated verbatim on a later day."""
+    """Rig-detected failures the critic should see: headless phrases, offers repeated verbatim on a later day, the user
+    sent to a shell, a what-changed question answered without a since-last line, a caveat the reply then answers itself,
+    and resolved/new counts with no item named beside them."""
     days = [s for s in log if s.startswith("=== DAY")]
-    seen, repeats, headless, hands_off = {}, [], [], []
+    seen, repeats, headless, hands_off, no_since, self_answered, bare_counts = {}, [], [], [], [], [], []
     for i, section in enumerate(days):
-        said = "\n".join(l for l in section.splitlines() if not l.startswith("[question tool]"))  # the rig's own lines
-        headless += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HEADLESS.finditer(said)]
-        hands_off += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HANDS_OFF.finditer(said)]
+        title = section.splitlines()[0]
+        said = "\n".join(l for l in section.splitlines()[1:] if not l.startswith("[question tool]"))  # the rig's own lines
+        headless += [f"{title}: {m.group(0)}" for m in HEADLESS.finditer(said)]
+        hands_off += [f"{title}: {m.group(0)}" for m in HANDS_OFF.finditer(said)]
+        if SINCE_Q.search(title) and not title.startswith("=== DAY 1") and not SINCE_A.search(said[:600]):
+            no_since.append(f"{title}: no since-last line in the opening")
+        self_answered += [f"{title}: {m.group(0)[:160]}" for m in CAVEAT_ANSWERED.finditer(said)]
+        for para in re.split(r"\n\s*\n", said) if "watcher" not in title else []:  # the watcher's own count lines are the rig's
+            if any(int(m.group(1)) > 0 for m in COUNT.finditer(para)) and not NAMED.search(para):
+                bare_counts.append(f"{title}: {para.strip()[:160]}")
         for offer in OFFER.findall(section):
             if offer in seen and seen[offer] != i:
                 repeats.append(f"{section.splitlines()[0]} repeats an offer from {days[seen[offer]].splitlines()[0]}: {offer}")
             seen.setdefault(offer, i)
     return "\n".join(["=== RIG LINT ===", f"headless phrases: {len(headless)}", *headless,
                       f"verbatim re-offers: {len(repeats)}", *repeats,
-                      f"hands-off violations (user sent to a shell or told Lantern does not know): {len(hands_off)}", *hands_off, ""])
+                      f"hands-off violations (user sent to a shell or told Lantern does not know): {len(hands_off)}", *hands_off,
+                      f"what-changed questions answered without a since-last line: {len(no_since)}", *no_since,
+                      f"caveats the reply then answers itself: {len(self_answered)}", *self_answered,
+                      f"resolved/new/changed counts with nothing named beside them: {len(bare_counts)}", *bare_counts, ""])
 
 
 WAIT = object()  # in a day's turns: wait for the background survey before the next turn
