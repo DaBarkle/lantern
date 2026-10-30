@@ -320,6 +320,15 @@ def main(folder: str, name: str = "default"):
     unit = f"lantern-sim-fail-{profile}"  # every piece of machine state carries the profile, so two weeks never collide
     timer = f"lantern-sim-nightly-{profile}"
     ssh_host = f"simbox-{profile}"
+
+    def clear_units() -> None:
+        """This profile's own transient units go away, at the start (an aborted run may have left them loaded, and
+        systemd-run then refuses the name) and at the end."""
+        for u in (f"{timer}.timer", f"{timer}.service", f"{unit}.service"):
+            subprocess.run(["systemctl", "--user", "stop", u], check=False, capture_output=True)
+            subprocess.run(["systemctl", "--user", "reset-failed", u], check=False, capture_output=True)
+
+    clear_units()
     sc = scenarios(cwd, sim, unit)[name]
     noise_units: set[str] = set()  # other weeks' units and folders seen while this one ran; the critic is told they are noise
 
@@ -449,8 +458,7 @@ def main(folder: str, name: str = "default"):
         if ssh_cfg.exists():  # remove only this week's own block; another week may have its own
             kept = re.sub(rf"\n{re.escape(ssh_marker)}\n.*?{re.escape(ssh_marker)} end\n", "", ssh_cfg.read_text(), flags=re.S)
             ssh_cfg.write_text(kept) if (ssh_existed or kept.strip()) else ssh_cfg.unlink()
-        subprocess.run(["systemctl", "--user", "stop", f"{timer}.timer"], check=False, capture_output=True)
-        subprocess.run(["systemctl", "--user", "reset-failed", unit], check=False, capture_output=True)
+        clear_units()
         (cwd / "scratch.bin").unlink(missing_ok=True)
         shutil.rmtree(sim, ignore_errors=True)
         log.append("=== TEARDOWN === " + stop_server(server, data))
