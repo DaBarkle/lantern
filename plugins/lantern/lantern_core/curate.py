@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 from . import memory
 from .paths import ensure_data_dir
@@ -42,7 +43,7 @@ def _ask(prompt: str) -> list[dict]:
     """Headless claude, isolated: no user settings or hooks, no MCP, no tools, no saved session."""
     cwd = ensure_data_dir() / "curate-cwd"
     cwd.mkdir(exist_ok=True)
-    r = subprocess.run(["claude", "-p", "--model", MODEL, "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
+    r = subprocess.run([claude_bin(), "-p", "--model", MODEL, "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
                         "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--no-session-persistence",
                         "--disable-slash-commands"], input=prompt, capture_output=True, text=True, cwd=cwd, timeout=600)
     if r.returncode:
@@ -98,5 +99,10 @@ def run(now: float | None = None, ask=_ask) -> int:
     return added
 
 
+def claude_bin() -> str:
+    # A scheduler's PATH often lacks the installer's folder, so look there too.
+    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+
+
 def available() -> bool:
-    return shutil.which("claude") is not None
+    return Path(claude_bin()).exists()
