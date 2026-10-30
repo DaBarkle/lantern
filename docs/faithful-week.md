@@ -265,3 +265,11 @@ persona this scenario does not use).
 
 Rig issue, fixed: asked "which Plex is stuck?", the scripted user picked the first option (the desktop app), which sent
 the model down an irrelevant path; the persona now picks the server when a question is about Plex.
+
+## Weeks side by side
+
+With the pool, a week can see other weeks' test units (`lantern-sim-*-<other profile>`) and probe folders. The rig
+records what it saw in the AUDIT section and tells the critic, in the events text, that reporting them is correct and to
+leave them out of the watches and since-last scores. The harness is not changed for this: on a real machine other failed
+units are real and must be reported. Compare pooled weeks with pooled weeks; for a strict baseline run with
+`WEEK_SLOTS=1` when the machine is otherwise idle.
