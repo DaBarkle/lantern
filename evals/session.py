@@ -135,8 +135,11 @@ class Session:
         if plugin_dir:  # measure the checkout, not the installed copy; the installed copies stay off so hooks fire once
             off = {"lantern@lantern": False, "lantern-tailscale@lantern": False, "lantern-media-server@lantern": False}
             cmd += ["--plugin-dir", str(plugin_dir), "--settings", json.dumps({"enabledPlugins": off})]
+        env = dict(os.environ)
+        if plugin_dir:  # the model's own `lantern` commands must hit the folder the hooks use (the trial plugin's), not the installed one's
+            env["LANTERN_HOME"] = str(Path.home() / ".claude" / "plugins" / "data" / "lantern-inline")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True, cwd=self.cwd, bufsize=1)
+                                     text=True, cwd=self.cwd, bufsize=1, env=env)
 
     def _send(self, obj: dict) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
