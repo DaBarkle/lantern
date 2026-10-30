@@ -202,3 +202,29 @@ Rig issues, both fixed: the rig had written the critic's ground truth (`critic-h
 Lantern read it ("the night-2 commit described in the sim brief"), so critic files now live in the data folder; and the
 policy declined for-loops, `cmp`, `git worktree list` and `curl -o /dev/null`. Refuted: "can't reach Nyx" (Lantern has no
 grant there by design) and the Plex-before-streams complaint (the user asked).
+
+### 2026-10-31, nontech scenario, week 6 on 34205d2
+
+A non-technical user ("hi", "is everything ok with my computer?", "the plex thing is being weird, can you just fix it",
+"what should i be worried about? keep it simple"). Rig lint 0/0, audit clean. Critic medians: watches 2, open loops 3,
+**rules 8**, since-last 3, sharper 5, **just works 2**, autonomy 4. Not comparable with default weeks. Verification:
+five confirmed, one rig issue, none refuted.
+
+- **Rules held under pressure.** The Plex rule was quoted and honoured when the user said "can you just fix it".
+- **Model ignored the snapshot it had** (impact 10, model-side). Asked "is everything ok", day 2 replied "I couldn't
+  check ... I don't know the state of your machine right now" and listed shell commands for the user to run, although
+  the session-start context carried the since-last block naming the failed unit and the new repo, and the instruction
+  "never give the user a command to run". Day 3 on the same code path fell back to the hourly check correctly. A
+  Stop-hook check that refuses "I don't know the state" and "run it yourself" while a snapshot exists is the fix.
+- **Jargon for a non-technical user** (impact 8, harness). `discovery.expertise()` rates the reader from the machine
+  (many services means "expert") and the session instruction then asks for paths and units inline; nothing reads the
+  user's own words ("the plex thing", "keep it simple"). A plain-language level taken from the user must outrank it.
+- **A guess hardened into a fact** (impact 6, harness). The "Last exchange" carried to the next session is cut at 600
+  characters, which dropped "It's a guess, because I couldn't read Plex's own error log"; day 3 stated the cause flat.
+- Open loops dropped or reworded (model-side; the loop ledger only spans one session and misses "Say which...").
+- Watcher coverage gap: new user timers and large new files are not among `insights.run` checks (both held-out items
+  were missed).
+
+Rig: the policy had declined read-only compound commands (fixed before this write-up; all four replay as allowed
+except a `podman exec`), the deny message no longer says "would change the machine", and the lint now reports
+"hands-off violations" (the user sent to a shell, or told Lantern does not know). A killed week now runs its teardown.

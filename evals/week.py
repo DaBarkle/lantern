@@ -21,6 +21,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -42,6 +43,8 @@ MIN_FREE_MB = 6000
 HEADLESS = re.compile(r"no shell|question tool|only (?:lets me )?read files|can only read|couldn't read the journal|isn't available this session"
                       r"|without a shell|once I have a shell", re.I)
 OFFER = re.compile(r"(?m)^(?:Next,? I can|I can also|Want me to)[^\n]*")
+HANDS_OFF = re.compile(r"run it yourself|run (?:it|this|them) yourself|approve it when the prompt|allow (?:the|that|this|read-only) command"
+                       r"|I don't know the state of your machine|type `secret|allow read-only commands", re.I)  # the user must never be sent to a shell
 NEVER = re.compile(r"tailscale|virsh (?!list|dom(?:info|state|blk)|net-list|pool-list|vol-list)|systemctl (?:--user )?(?:restart|stop|start|disable|enable|kill|reset-failed)"
                    r"|podman (?:rm|rmi|stop|kill|restart|pull|run|exec|image (?:rm|prune)|system prune)|rm -rf|rpm-ostree (?!status)|ssh |scp |nmcli", re.I)
 
@@ -94,16 +97,18 @@ def stop_server(proc: subprocess.Popen, data: Path) -> str:
 def lint(log: list[str]) -> str:
     """Rig-detected failures the critic should see: headless phrases, and offers repeated verbatim on a later day."""
     days = [s for s in log if s.startswith("=== DAY")]
-    seen, repeats, headless = {}, [], []
+    seen, repeats, headless, hands_off = {}, [], [], []
     for i, section in enumerate(days):
         said = "\n".join(l for l in section.splitlines() if not l.startswith("[question tool]"))  # the rig's own lines
         headless += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HEADLESS.finditer(said)]
+        hands_off += [f"{section.splitlines()[0]}: {m.group(0)}" for m in HANDS_OFF.finditer(said)]
         for offer in OFFER.findall(section):
             if offer in seen and seen[offer] != i:
                 repeats.append(f"{section.splitlines()[0]} repeats an offer from {days[seen[offer]].splitlines()[0]}: {offer}")
             seen.setdefault(offer, i)
     return "\n".join(["=== RIG LINT ===", f"headless phrases: {len(headless)}", *headless,
-                      f"verbatim re-offers: {len(repeats)}", *repeats, ""])
+                      f"verbatim re-offers: {len(repeats)}", *repeats,
+                      f"hands-off violations (user sent to a shell or told Lantern does not know): {len(hands_off)}", *hands_off, ""])
 
 
 WAIT = object()  # in a day's turns: wait for the background survey before the next turn
@@ -189,6 +194,7 @@ def main(folder: str, name: str = "default"):
     ssh_cfg = Path.home() / ".ssh" / "config"
     ssh_before = ssh_cfg.read_text() if ssh_cfg.exists() else ""
     sessions: list[Session] = []
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # a killed week still runs its teardown below
 
     def say(day, label, text, s: Session | None = None):
         asked = "\n".join(f"[question tool] {q}" for q in (s.asked if s else [])) if s else ""
