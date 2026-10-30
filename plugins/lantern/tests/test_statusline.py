@@ -32,7 +32,7 @@ class StatusLineTest(unittest.TestCase):
         return json.loads(self.settings.read_text())
 
     def backups(self):
-        return sorted(self.settings.parent.glob("settings.json.*.lantern-bak"))
+        return sorted(self.settings.parent.glob("settings.json*.lantern-bak"))
 
     def test_installs_once_by_merging_with_a_backup(self):
         self.settings.write_text(json.dumps({"model": "opus", "enabledPlugins": {"lantern@lantern": True}}))
@@ -44,6 +44,15 @@ class StatusLineTest(unittest.TestCase):
         self.assertEqual(json.loads(self.backups()[0].read_text()), {"model": "opus", "enabledPlugins": {"lantern@lantern": True}})
         self.assertEqual(statusline.ensure(), ("ok", "status line is Lantern's", False))  # idempotent
         self.assertEqual(len(self.backups()), 1)
+
+    def test_a_trial_plugin_never_touches_the_users_status_line(self):
+        self.settings.write_text(json.dumps({"model": "opus"}))
+        inline = Path(self.tmp.name) / "lantern-inline" / "profiles" / "week"
+        with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": str(inline)}):
+            status, msg, changed = statusline.ensure()
+        self.assertEqual((status, changed), ("ok", False))
+        self.assertNotIn("statusLine", self.read())
+        self.assertEqual(self.backups(), [])
 
     def test_a_status_line_the_user_had_keeps_running_above_lanterns(self):
         self.settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo mine", "padding": 1}}))

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from . import discovery, status
+from .paths import ensure_data_dir
 
 MARK = "lantern.py\" status"  # how Lantern recognises its own status line command
 
@@ -29,9 +30,17 @@ def in_terminal() -> bool:
     return os.environ.get("CLAUDE_CODE_ENTRYPOINT", "cli") == "cli"
 
 
+def trial() -> bool:
+    """A plugin loaded from a folder (`--plugin-dir`: Claude Code keeps its data under "lantern-inline") is a trial run
+    or an eval; it must never point the user's real status line at a checkout under test."""
+    return "lantern-inline" in ensure_data_dir().parts
+
+
 def _write(path: Path, cfg: dict) -> None:
-    if path.exists():
-        path.with_name(f"settings.json.{time.strftime('%Y%m%d-%H%M%S')}.lantern-bak").write_bytes(path.read_bytes())
+    if path.exists():  # one backup, the one before Lantern's first write; later writes keep it
+        bak = path.with_name("settings.json.lantern-bak")
+        if not bak.exists():
+            bak.write_bytes(path.read_bytes())
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name("settings.json.lantern-tmp")
     tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -41,6 +50,8 @@ def _write(path: Path, cfg: dict) -> None:
 def ensure() -> tuple[str, str, bool]:
     """(ok|warn, message, changed). Installs once, repairs its own stale command, and leaves alone a status line the
     user removed or replaced afterwards: that was their choice."""
+    if trial():
+        return "ok", "status line left alone (plugin loaded from a folder)", False
     path = settings_file()
     try:
         cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
