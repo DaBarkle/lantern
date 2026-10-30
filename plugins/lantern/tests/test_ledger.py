@@ -108,6 +108,9 @@ class LedgerTest(unittest.TestCase):
         r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": "don't restart plex without asking me first"})
         self.assertIn("standing rule", r["systemMessage"])
         self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "can you restart plex?"}))  # a question is not a rule
+        for task in ("stop the plex container and check the logs", "make sure you restart wireplumber after", "remember to push the branch"):
+            r = self.call("user-prompt-submit", {"session_id": "s1", "prompt": task})
+            self.assertTrue(r is None or "systemMessage" not in r, task)  # a task for now is not a standing rule
         ctx = self.call("session-start", {"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
         self.assertIn("- don't restart plex without asking me first", ctx)
         again = self.call("user-prompt-submit", {"session_id": "s2", "prompt": "don't restart plex without asking me first"})

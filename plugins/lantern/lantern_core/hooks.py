@@ -27,8 +27,10 @@ PROJECT_RESUME_DAYS = 14  # a session in the same folder is worth showing for lo
 AGENT_CHARS = 1500
 SHORT_PROMPT_TERMS = 8  # below this, the session's own names join the recall query
 # A correction holds from the moment it is said, not from tomorrow's curation.
-CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|stop|from now on|in future|i(?:'ve| have)? told you|i said|"
-                        r"i asked you|remember(?: that| to)?|make sure(?: you)?|you (?:should|must|need to))\b", re.I)
+# Only openings that state a standing preference. "Stop the container" or "make sure you restart it" are tasks for now.
+CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|from now on|in future|going forward|"
+                        r"stop (?:doing|using|making|trying|asking|adding|suggesting)|i(?:'ve| have)? told you|i said|i asked you|"
+                        r"remember that)\b", re.I)
 KIND_WEIGHT = {"fact": 1.5, "pattern": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
 CURATED = {"fact", "rule", "pattern", "doc"}
 CURATED_MIN_TERMS = 9
