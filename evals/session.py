@@ -22,11 +22,12 @@ PLAIN = {"ls", "cat", "head", "tail", "wc", "stat", "file", "df", "du", "free", 
          "printenv", "which", "type", "command", "grep", "rg", "sort", "uniq", "tr", "cut", "awk", "echo", "jq", "ss", "realpath",
          "readlink", "basename", "dirname", "test", "true", "nproc", "lscpu", "lsblk", "mount", "ps", "pgrep", "ip", "flatpak",
          "rpm-ostree", "crontab", "getent", "timedatectl", "journalctl", "loginctl", "systemd-analyze", "cd", "pwd", "lantern",
-         "lantern.py", "tree", "column", "paste", "diff", "cmp", "md5sum", "sha256sum", "nl", "tac", "rev", "seq", "printf", "sleep", "done", "fi"}
+         "lantern.py", "tree", "column", "paste", "diff", "cmp", "md5sum", "sha256sum", "nl", "tac", "rev", "seq", "printf", "sleep", "done", "fi",
+         "last", "od", "xxd", "hexdump", "strings", "[", "sensors", "lsusb", "lspci", "uname"}
 SUB = {"git": {"status", "log", "diff", "show", "remote", "rev-parse", "branch", "stash", "ls-files", "describe", "config", "tag", "worktree"},
        "systemctl": {"status", "show", "cat", "list-units", "list-timers", "list-unit-files", "is-active", "is-enabled", "is-failed",
                      "list-dependencies"},
-       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top"},
+       "podman": {"ps", "images", "inspect", "logs", "version", "info", "stats", "volume", "network", "top", "system"},
        "distrobox": {"list", "ls"}, "docker": {"ps", "images", "inspect", "logs"},
        "virsh": {"list", "dominfo", "domstate", "domblklist", "domblkinfo", "dommemstat", "net-list", "pool-list", "vol-list"}}
 CURL_WRITES = {"-X", "--request", "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-o", "--output", "-O"}
@@ -43,6 +44,8 @@ def _ok(toks: list[str]) -> bool:
     if toks[0] in ("do", "then", "else"):
         return _ok(toks[1:])
     prog = os.path.basename(toks[0])
+    if prog == "command" and toks[1:2] == ["-v"]:
+        return True  # asks which programs exist
     if prog in WRAPPERS:
         rest = [t for t in toks[1:] if not t.startswith("-") and not re.fullmatch(r"\d+[smh]?", t)]
         return _ok(rest)
@@ -64,8 +67,10 @@ def _ok(toks: list[str]) -> bool:
             return words[1:2] == ["list"]
         if prog == "git" and "config" in words:
             return "--get" in toks or "--list" in toks or "-l" in toks
-        if prog == "podman" and words and words[0] in ("volume", "network"):
-            return len(words) > 1 and words[1] in ("ls", "inspect")
+        if prog == "podman" and words and words[0] in ("volume", "network", "system"):
+            return len(words) > 1 and words[1] in ("ls", "inspect", "df", "info")
+        if prog == "systemctl" and not words:
+            return True  # `systemctl --user --failed` lists units
         return bool(words) and words[0] in SUB[prog]
     return prog in PLAIN
 
@@ -74,7 +79,7 @@ def segments(command: str) -> list[list[str]]:
     """Token lists for each simple command, split on |, ||, &&, ; and newlines with quotes respected (grep -E 'a|b' is one
     token). Raises ValueError on unbalanced quotes."""
     out: list[list[str]] = []
-    for line in command.splitlines():
+    for line in command.replace("\\\n", " ").splitlines():  # a line continuation is one command
         lex = shlex.shlex(line, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
         cur: list[str] = []
@@ -180,10 +185,12 @@ class Session:
             return 0
 
     def say(self, text: str) -> str:
-        """One user turn; returns the final reply (tool use and permission prompts are handled on the way)."""
+        """One user turn; returns everything the assistant said in it (tool use and permission prompts are handled on the
+        way). A Stop hook may send the model back for one more pass, and the user sees both parts."""
         self.turns += 1
         self._send({"type": "user", "message": {"role": "user", "content": text}})
         deadline = time.monotonic() + TURN_SECONDS
+        said: list[str] = []
         while time.monotonic() < deadline:
             line = self.proc.stdout.readline()
             if not line:
@@ -199,8 +206,11 @@ class Session:
                 decision = self._decide(msg.get("request") or {})
                 self._send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"],
                                                                       "response": decision}})
+            elif msg.get("type") == "assistant":
+                said += [b.get("text", "") for b in (msg.get("message") or {}).get("content") or [] if b.get("type") == "text" and b.get("text", "").strip()]
             elif msg.get("type") == "result":
-                return msg.get("result") or f"({msg.get('subtype', 'no result')})"
+                final = msg.get("result") or f"({msg.get('subtype', 'no result')})"
+                return "\n\n".join(said) if len(said) > 1 else final
         self.proc.kill()
         return "(no reply: the turn timed out)"
 
@@ -231,7 +241,11 @@ if __name__ == "__main__":  # self-check of the allowlist and the scripted user
     assert not allowed("ls | xargs rm") and not allowed("echo x &> f") and allowed("systemctl --user list-units --all --no-pager 2>/dev/null | grep -i plex")
     assert allowed("for c in a b; do virsh -c $c list --all 2>/dev/null; virsh -c $c domblklist Nyx; done") and not allowed("for f in *; do rm $f; done")
     assert allowed("curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -o out.bin http://x") and allowed("git worktree list") and not allowed("git worktree add x")
+    assert allowed("command -v restic borg rclone") and allowed("podman system df") and not allowed("podman system prune") and allowed("[ -f $ex ] && cat $ex")
     assert allowed("timeout 5 systemctl --user list-timers --all --no-pager") and not allowed("podman image rm x") and not allowed("python3 -c 'print(1)'")
+    assert allowed('L="/x/lantern.py"\n"$L" remember --profile "a b." && \\\n"$L" remember --rule "c"')  # line continuation
+    assert allowed("curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/identity") and not allowed("curl -s -o /tmp/x http://localhost:1/")
+    assert allowed("systemctl --user --failed --no-pager 2>&1 | tail") and allowed("uptime -s; last -x -n 6 | head") and allowed("od -A d -N 32 f; cmp f /dev/zero")
     assert answer({"question": "Which guardrails?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}) == "A, B"
     assert answer({"question": "Send approvals to your phone?", "options": [{"label": "Yes"}, {"label": "Not now"}]}) == "Not now"
     assert answer({"question": "Is this right?", "options": [{"label": "Change it"}, {"label": "Yes, that's right"}]}) == "Yes, that's right"
