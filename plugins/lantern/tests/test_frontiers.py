@@ -145,7 +145,14 @@ class SshKeyTest(unittest.TestCase):
         self.assertFalse(sshkey.KEY.exists())
         self.assertEqual(sshkey.grants(), {})
 
+    def test_without_phone_approvals_it_fails_fast(self):
+        with mock.patch.object(sshkey.subprocess, "run", side_effect=self.fake_run):
+            code, msg = sshkey.grant("nyx", ask=lambda q: self.fail("asked a phone that is not listening"))
+        self.assertEqual((code, self.calls), (2, []))
+        self.assertIn("aren't set up yet", msg)
+
     def test_one_approval_then_key_install_and_proof(self):
+        approvals.cli(["setup"])
         with mock.patch.object(sshkey.subprocess, "run", side_effect=self.fake_run):
             code, msg = sshkey.grant("nyx", ask=lambda q: approvals.APPROVED)
         self.assertEqual(code, 0)
@@ -158,6 +165,7 @@ class SshKeyTest(unittest.TestCase):
         self.assertEqual([c[0] for c in self.calls], ["ssh-copy-id", "ssh"])  # one key for every host
 
     def test_denied_or_unanswered_runs_nothing(self):
+        approvals.cli(["setup"])
         with mock.patch.object(sshkey.subprocess, "run", side_effect=self.fake_run):
             code, msg = sshkey.grant("nyx", ask=lambda q: approvals.DENIED)
             self.assertEqual((code, self.calls), (approvals.DENIED, []))

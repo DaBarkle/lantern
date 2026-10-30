@@ -18,6 +18,14 @@ RETRY_SECONDS = 30
 APPROVED, DENIED, TIMED_OUT = 0, 1, 3
 
 
+def ready() -> str | None:
+    """Why a question cannot be asked yet: the topic only exists once setup showed it, so before that a question
+    would wait on a phone that is not listening. None when approvals are set up."""
+    if (ensure_data_dir() / "approvals.json").exists():
+        return None
+    return "phone approvals aren't set up yet: show the ntfy topic with `lantern approve setup`, subscribe in the app, then ask again"
+
+
 def config() -> dict:
     path = ensure_data_dir() / "approvals.json"
     try:
