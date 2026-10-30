@@ -109,8 +109,11 @@ def main(folder: str):
         sys.exit(f"only {available_mb()} MB available; the week needs {MIN_FREE_MB} MB of headroom")
     pointer_before = POINTER.read_text() if POINTER.exists() else None
     if data.exists():
-        shutil.rmtree(data)  # every week starts as a new user
+        shutil.rmtree(data)  # every week starts as a new user...
     data.mkdir(parents=True)
+    transcripts = Path.home() / ".claude" / "projects" / str(cwd.resolve()).replace("/", "-")
+    shutil.rmtree(transcripts, ignore_errors=True)  # ...so Claude Code's own session files for the probe folder go too
+    (cwd / "week.txt").unlink(missing_ok=True)
     server = start_server(data)
     log = []
     sim = cwd / "simrepo"
