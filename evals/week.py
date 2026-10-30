@@ -29,6 +29,8 @@ import uuid
 import zlib
 from pathlib import Path
 
+import fcntl
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from session import Session  # noqa: E402
 
@@ -106,6 +108,11 @@ def main(folder: str):
     cwd = Path(folder)
     profile = json.loads((cwd / ".lantern.json").read_text())["profile"]
     data = BASE / "profiles" / profile
+    slot = open(Path.home() / ".local" / "share" / "lantern" / "week.lock", "w")  # one week on this machine at a time
+    try:
+        fcntl.flock(slot, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit("another simulated week is running on this machine; wait for it (one memory server at a time)")
     if available_mb() < MIN_FREE_MB:
         sys.exit(f"only {available_mb()} MB available; the week needs {MIN_FREE_MB} MB of headroom")
     pointer_before = POINTER.read_text() if POINTER.exists() else None
