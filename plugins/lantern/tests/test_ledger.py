@@ -163,6 +163,10 @@ class LedgerTest(unittest.TestCase):
         db.close()
 
     def test_what_changed_points_at_the_computed_block(self):
+        with mock.patch.object(hooks.semantic, "search", return_value=None), \
+                mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["simrepo"], "at": time.time()}, "insights_at": time.time()}):
+            r = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1", "transcript_path": "/nonexistent"})
+            self.assertIn("This asks what changed", r["hookSpecificOutput"]["additionalContext"])  # the prompt hook must not crash when names are recorded
         with mock.patch.object(hooks.semantic, "search", return_value=None):
             ctx = hooks.user_prompt_submit({"prompt": "what changed since yesterday?", "session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
             self.assertIn("File timestamps in this folder are not the answer", ctx)
