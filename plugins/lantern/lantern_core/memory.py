@@ -127,16 +127,23 @@ def profile(db: sqlite3.Connection, max_chars: int) -> str:
     return "\n\n".join(out)
 
 
-def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: bool = False) -> list[str]:
+_STATE = re.compile(r"\b(?:stopped|paused|disabled|down|off|broken|failing|pending|running|up|enabled|on hold|waiting|blocked)\b", re.I)
+STATE_FRESH_DAYS = 14
+INDEX_LINE = 140
+
+
+def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: bool = False, now: float | None = None) -> list[str]:
     """One line per item of this kind (its first line), newest first, up to max_chars. dated: lead with the month, so
     a session can tell a fresh fact from one that may have moved on."""
     out, used = [], 0
     # A long item is stored in chunks; its first chunk (lowest id) opens with the summary line.
     for text, created in db.execute("SELECT text, created FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
                                     "AND status='active' GROUP BY source) ORDER BY created DESC", (kind,)):
-        line = text.strip().splitlines()[0][:300] if text.strip() else ""
+        line = text.strip().splitlines()[0][:INDEX_LINE if dated else 300] if text.strip() else ""
         if dated and line:
-            line = f"[{time.strftime('%Y-%m', time.localtime(created))}] {line}"
+            # A note about a state ("SABnzbd is stopped") goes stale in days; a note about a design does not.
+            stale = _STATE.search(line) and ((now or time.time()) - created) > STATE_FRESH_DAYS * 86400
+            line = f"[{time.strftime('%Y-%m', time.localtime(created))}{', may have changed' if stale else ''}] {line}"
         if not line or used + len(line) > max_chars:
             continue
         out.append(line)

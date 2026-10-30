@@ -283,10 +283,17 @@ class IndexDatesTest(unittest.TestCase):
     def test_fact_index_lines_are_dated(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
             db = memory.connect()
-            memory.add(db, "fact", "curate:a", "Paperclip was stopped on purpose.", created=time.mktime(time.strptime("2026-10-09", "%Y-%m-%d")))
+            memory.add(db, "fact", "curate:a", "Paperclip was stopped on purpose.", created=time.time() - 3 * 86400)
             db.close()
             ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
-            self.assertIn("- [2026-10] Paperclip was stopped on purpose.", ctx)
+            self.assertIn(f"- [{time.strftime('%Y-%m', time.localtime(time.time() - 3 * 86400))}] Paperclip was stopped on purpose.", ctx)
+            db = memory.connect()
+            memory.add(db, "fact", "curate:b", "SABnzbd on Nyx is stopped because the disks are full.", created=time.time() - 40 * 86400)
+            memory.add(db, "fact", "curate:c", "Films and series run as separate flows; Tdarr converts to H.265.", created=time.time() - 40 * 86400)
+            db.close()
+            ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn(", may have changed] SABnzbd on Nyx is stopped", ctx)
+            self.assertNotIn("may have changed] Films and series", ctx)
 
 
 class PreviousMessageTest(unittest.TestCase):

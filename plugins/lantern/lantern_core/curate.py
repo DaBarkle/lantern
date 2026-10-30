@@ -24,7 +24,8 @@ should still hold in future sessions:
 - rule: something the user asked for or corrected that should change how the assistant works from now on
   ("never restart X without asking", "keep replies short", "don't use hacky workarounds")
 - fact: a durable fact about the user's machines, services, accounts, people or projects
-  ("Plex runs as container-plex.service", "Paperclip was shut down on purpose on Oct 27")
+  ("Plex runs as container-plex.service", "Paperclip was shut down on purpose on Oct 27"). A fact about a state that
+  may change (a service stopped for now, a job paused, disks full) must say when it was true: "As of Oct 27, ..."
 - pattern: a way of working or a procedure that solved something and will apply again: the symptom, its cause
   and the fix, or the order things must be done in ("if Nyx services show network errors, check Gluetun first";
   "re-establish the SSH socket before touching Nyx"; "changes to the media stack get logged in the as-built")
