@@ -57,16 +57,16 @@ def disk() -> list[tuple[str, str, float]]:
     out, seen = [], set()
     for mount in (str(Path.home()), "/var"):  # on an immutable OS the root is read-only and always "full"
         try:
-            dev = Path(mount).stat().st_dev
             u = shutil.disk_usage(mount)
         except OSError:
             continue
+        dev = (u.total, u.free // (1 << 20))
         if dev in seen:
-            continue  # /home and /var are one volume on Fedora Atomic: one finding, not two
+            continue  # /home and /var are one volume on Fedora Atomic (subvolumes share size and free space): one finding
         seen.add(dev)
         pct = 100 * (u.total - u.free) / u.total if u.total else 0
         if pct >= DISK_PCT:
-            out.append((f"insight/disk/{dev}", f"the volume holding {mount} is {pct:.0f}% full ({u.free / 1e9:.0f} GB of "
+            out.append((f"insight/disk/{u.total}", f"the volume holding {mount} is {pct:.0f}% full ({u.free / 1e9:.0f} GB of "
                         f"{u.total / 1e9:.0f} GB left{_reclaimable()})", 6 if pct >= 92 else 4))
     return out
 
@@ -98,8 +98,9 @@ def services(caps: dict) -> list[tuple[str, str, float]]:
     for line in failed[:5]:
         unit = line.split()[0] if line.split() else ""
         if unit:
-            log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "20", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
-            cause = f": last log line: {log[-1][:160]}" if log else ""
+            log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "30", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
+            telling = [l for l in log if "code=" in l or "status=" in l or "timeout" in l.lower() or "error" in l.lower()]
+            cause = f": {telling[-1][:160]}" if telling else (f": last log line: {log[-1][:160]}" if log else "")
             out.append((f"insight/failed/{unit}", f"{unit} has failed{cause}", 5))
     return out
 

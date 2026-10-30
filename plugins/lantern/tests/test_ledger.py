@@ -358,14 +358,23 @@ class SurveyTest(unittest.TestCase):
                 self.assertTrue(survey.real_start())
                 self.assertFalse(survey.real_start())  # already running
             self.assertEqual(spawned[0][-3:-2], ["survey"])
-            out = json.dumps({"result": "# What this machine is for\nA lab.\n# Profile\nA builder (inferred)."})
-            with mock.patch.object(survey.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=out)):
+            events = [json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x/README.md"}}]}}),
+                      json.dumps({"type": "result", "result": "# What this machine is for\nA lab.\n# Profile\nA builder (inferred)."})]
+            fake = mock.Mock(stdout=iter(l + "\n" for l in events), poll=lambda: 0, wait=lambda timeout=None: 0, kill=lambda: None)
+            with mock.patch.object(survey.subprocess, "Popen", return_value=fake):
                 survey.run()
+            self.assertEqual(json.loads((Path(d) / "survey.json").read_text())["steps"], 1)
             self.assertIn("A lab", survey.brief())
             db = memory.connect()
             self.assertIn("A builder", memory.profile(db, 1000))
             self.assertIn("finished its survey", stage.top(db)[0]["message"])
             db.close()
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                r = hooks.user_prompt_submit({"prompt": "anything new?", "session_id": "s9"})
+            self.assertIn("A lab", r["hookSpecificOutput"]["additionalContext"])  # the brief arrives mid-session, once
+            with mock.patch.object(hooks.semantic, "search", return_value=None):
+                r = hooks.user_prompt_submit({"prompt": "and now?", "session_id": "s9"})
+            self.assertTrue(r is None or "A lab" not in r["hookSpecificOutput"]["additionalContext"])
             self.assertFalse(survey.real_start())  # done: never again
 
 
@@ -373,7 +382,6 @@ class InsightDetailsTest(unittest.TestCase):
     def test_disk_is_one_finding_per_volume_and_secrets_are_names_only(self):
         from lantern_core import insights
         with mock.patch.object(insights.shutil, "disk_usage", return_value=mock.Mock(total=1000e9, free=50e9)), \
-                mock.patch.object(insights.Path, "stat", return_value=mock.Mock(st_dev=7)), \
                 mock.patch.object(insights, "_reclaimable", return_value="; podman could free 9GB of images"):
             found = insights.disk()
         self.assertEqual(len(found), 1)

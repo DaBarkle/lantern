@@ -60,22 +60,41 @@ def start(data: Path | None = None) -> bool:
     return True
 
 
+def _progress(data: Path, started: float, steps: int, last: str) -> None:
+    (data / "survey.json").write_text(json.dumps({"started": started, "steps": steps, "last": last[:120]}))
+
+
 def run(data: Path | None = None) -> str:
-    """The survey itself (runs detached): one headless, read-only claude session, then store the brief."""
+    """The survey itself (runs detached): one headless, read-only claude session, then store the brief. Progress (files
+    read so far) is written as it goes, so a session can say what the survey is doing."""
     data = data or ensure_data_dir()
     inventory = discovery.summary() or "(nothing yet)"
-    cwd = data / "survey-cwd"
-    cwd.mkdir(exist_ok=True)
-    r = subprocess.run([curate.claude_bin(), "-p", "--model", MODEL, "--max-turns", str(MAX_TURNS), "--tools", "Read,Glob,Grep",
-                        "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
-                        "--add-dir", str(Path.home()), "--output-format", "json", PROMPT.format(inventory=inventory)],
-                       capture_output=True, text=True, cwd=Path.home(), timeout=TIMEOUT)
-    text = ""
-    if r.returncode == 0:
-        try:
-            text = json.loads(r.stdout).get("result", "")
-        except ValueError:
-            text = ""
+    started = time.time()
+    proc = subprocess.Popen([curate.claude_bin(), "-p", "--model", MODEL, "--max-turns", str(MAX_TURNS), "--tools", "Read,Glob,Grep",
+                             "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+                             "--add-dir", str(Path.home()), "--output-format", "stream-json", "--verbose",
+                             PROMPT.format(inventory=inventory)],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=Path.home())
+    text, steps = "", 0
+    try:
+        for line in proc.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if time.time() - started > TIMEOUT:
+                proc.kill()
+                break
+            if ev.get("type") == "assistant":
+                for b in ev.get("message", {}).get("content", []):
+                    if b.get("type") == "tool_use":
+                        steps += 1
+                        inp = b.get("input") or {}
+                        _progress(data, started, steps, f"{b.get('name')} {inp.get('file_path') or inp.get('pattern') or ''}")
+            elif ev.get("type") == "result":
+                text = ev.get("result", "") or ""
+    finally:
+        proc.wait(timeout=30) if proc.poll() is None else None
     from .shield import find, redact
     text = redact(text) if text and not find(text[:0]) else text
     db = memory.connect()
@@ -93,8 +112,24 @@ def run(data: Path | None = None) -> str:
                           "in a later session.", score=3, days=1)
     finally:
         db.close()
-    (data / "survey.json").write_text(json.dumps({"started": time.time(), "done": True, "ok": bool(text.strip())}))
+    (data / "survey.json").write_text(json.dumps({"started": started, "done": True, "ok": bool(text.strip()), "steps": steps}))
     return text
+
+
+def status(data: Path | None = None) -> str:
+    """One line on the survey for a session: running (how long, how far), done, or nothing."""
+    data = data or ensure_data_dir()
+    try:
+        st = json.loads((data / "survey.json").read_text())
+    except (OSError, ValueError):
+        return ""
+    if st.get("done"):
+        return ""
+    mins = (time.time() - st.get("started", time.time())) / 60
+    if mins > TIMEOUT / 60:
+        return ""
+    return (f"Background survey of this machine: running for {mins:.0f} min (usually under 10), {st.get('steps', 0)} files looked at"
+            + (f", now at {st['last']}" if st.get("last") else "") + ". It only reads. Say so in one line if the user asks what is happening.")
 
 
 def brief(data: Path | None = None, max_chars: int = 6000) -> str:

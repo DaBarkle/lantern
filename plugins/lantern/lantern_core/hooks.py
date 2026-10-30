@@ -146,6 +146,9 @@ def session_start(payload: dict) -> dict | None:
     machine = discovery.summary()
     if machine:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
+    progress = survey.status()
+    if progress:
+        lines += ["", progress]
     understanding = survey.brief()
     if understanding:
         lines += ["", "Lantern's understanding of this machine (from its survey; quote from it when the user asks what Lantern knows):",
@@ -273,6 +276,17 @@ def user_prompt_submit(payload: dict) -> dict | None:
                       for h in titles]
     if attention:
         lines += ["Lantern's Stage changed since your last turn:", attention]
+        if "finished its survey" in attention:  # deliver the brief now, not at the next session start
+            lines += ["", "Lantern's survey of this machine (open your reply with 'While you were working I found more:' and show "
+                      "its worth-knowing items, proposed duties and service map):", survey.brief()]
+            db = memory.connect()
+            try:
+                stage.resolve(db, "survey/done")
+            finally:
+                db.close()
+    progress = survey.status()
+    if progress:
+        lines.append(progress)
     if noted:
         lines += ["Lantern stored this message as a standing rule for future sessions; acknowledge it in a few words."]
     reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
