@@ -265,7 +265,7 @@ class OnboardingTest(unittest.TestCase):
             self.assertIn("never runs a command", ctx)
             ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
             self.assertNotIn("first session on this machine", ctx)
-            self.assertIn("never ask the user to run /lantern commands", ctx)
+            self.assertIn("never runs /lantern commands", ctx)
 
 
 class ResourceGuardTest(unittest.TestCase):
