@@ -9,6 +9,8 @@ with uncommitted or unpushed work, active projects with no remote, long-untouche
 failed units, known services that are down. A read-only survey agent starts in the background (one process, capped
 turns and time, stands down under memory pressure).
 
+**Fast path (clients with an Agent tool).** Up to three read-only explore agents run in parallel at first contact (services, timers and containers; projects and backups; secrets and exposure) and their findings join the first reply; the background survey still runs for the full picture.
+
 **The first reply.** Who Lantern is in two sentences; what it found as a table; the findings as "things you may not know";
 one structured question: look wider (read-only), take on the responsibilities the findings suggest, approvals on the
 phone. Secrets are a line, not a step: `secret NAME: value` in chat goes to the keychain and never reaches the model.
