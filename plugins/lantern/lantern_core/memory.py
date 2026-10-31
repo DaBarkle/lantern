@@ -313,7 +313,8 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     reply = turn.get("reply", "")
     kept = [l for l in d.get("loops", []) if not addresses(reply, l)]  # done, re-asked or retired
     request = turn["user"] if len(terms(turn["user"])) >= 4 else d["goal"]  # "and now?" says less than what the session set out to do
-    fresh = [anchor(l, request) for l in open_loops(reply) if not closed_later(reply, l)]
+    fresh = [anchor(l, request) for l in open_loops(reply) if not closed_later(reply, l)
+             and not (l.startswith("[question tool]") and turn.get("answers"))]  # asked through the tool and answered there
     d["loops"] = list(dict.fromkeys(kept + fresh))[-LOOPS_KEEP:]
     with db:
         # cwd stays the folder the session started in: a `cd` mid-session must not make the next session in this folder skip it
@@ -324,7 +325,7 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
 
 _SENT = r"(?:[^\n.!?]|\.(?! |$))"  # one sentence: a dot inside a path or version does not end it
 _LOOP = re.compile(r"(?m)(?:^\s*(?:[-*\d.]+\s*)?|(?<=[.!?] )|(?<=[,;] ))(?:((?:(?:so |and |or |otherwise,? )?)(?:I (?:didn't|did not|couldn't|could not|haven't|have not|can't|cannot|won't|will not|can|could|propose)|"
-                   r"Next,? I can|I'll|I will|I'd|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
+                   r"Next,? I can|I'll|I will|I'd|I suggest|I recommend|Not (?:yet )?(?:done|checked)|Open question|Until you confirm|Still blocked|"
                    r"Shall I|Should I|Want me to|Would you like|Do you want|Let me know|Tell me (?:if|which|whether)|Say (?:the word|which|yes|go)|If you want me to|"
                    r"The (?:most useful )?next step|Still (?:waiting|open)|Waiting (?:on|for) you|type `secret)" + _SENT + r"{6,220}\??)|(" + _SENT + r"{6,220}\?)|("
                    + _SENT + r"{3,160}\b(?:looks|seems|appears|is|are) (?:stuck|frozen|wedged|stalled|hung|unexplained|still failing)\b" + _SENT + r"{0,120}))")
@@ -364,8 +365,24 @@ def anchor(loop: str, request: str) -> str:
 
 def open_loops(reply: str, limit: int = 8) -> list[str]:
     """Promises, gaps, offers and questions the assistant stated in its reply ("I didn't check X", "Next, I can Y",
-    "Should I Z?"), so the next session closes or re-asks them instead of repeating them."""
-    return [(m.group(1) or m.group(2) or m.group(3)).strip().rstrip(".") for m in _LOOP.finditer(reply or "")][-limit:]
+    "Should I Z?"), so the next session closes or re-asks them instead of repeating them. A bare "Want me to?" carries the
+    sentence before it, which says what it is about; the first offers of a reply are kept before its later small talk."""
+    out = []
+    for m in _LOOP.finditer(reply or ""):
+        loop = (m.group(1) or m.group(2) or m.group(3)).strip().rstrip(".")
+        if len(loop.split()) <= 5 and len(_content(loop)) < 2:
+            before = [x for x in re.split(r"(?<=[.!?])\s+|\n+", reply[:m.start()].strip()) if x.strip()]
+            if before:
+                prev = before[-1].strip().rstrip(".")
+                out = [o for o in out if o != prev]  # "I can save them now. Want me to?" is one offer, not two
+                loop = f"{prev}. {loop}"
+        out.append(loop)
+    out = list(dict.fromkeys(out))
+    offers = [l for l in out if _OFFER.search(l)]
+    return (offers + [l for l in out if l not in offers])[:limit] if len(out) > limit else out
+
+
+_OFFER = re.compile(r"\b(?:I can|I could|I'll|I will|I propose|I suggest|I recommend|Want me to|Shall I|Should I|Would you like|Do you want)\b", re.I)
 
 
 _GENERIC = frozenset("check checked checking whether already still would could should there which about their these those something because before haven didn "
@@ -386,11 +403,23 @@ def closed_later(reply: str, loop: str) -> bool:
     return bool(_CLOSED_LATER.search(later)) and bool(_content(loop) & _content(later))
 
 
+_SETTLED = re.compile(r"\b(?:done|saved|committed|pushed|fixed|finished|set up|turned (?:on|off)|switched (?:on|off)|now (?:on|off|covered|backed up)|"
+                      r"checked|confirmed|verified|resolved|cleared|no longer|dropped|retir\w+|won't|will not|not now|you said no|you declined|"
+                      r"skipp\w+|leaving (?:it|that)|left (?:it|that)|answered|it turns out|turned out|as you asked|shows|showed|"
+                      r"I (?:read|looked|found|ran|opened|tested|saw))\b", re.I)
+
+
 def addresses(reply: str, loop: str) -> bool:
-    """A reply addresses a loop when it reuses most of what the loop is about: the thing was done, re-asked or retired.
-    One shared word ("firewall", "6006") is a mention, not a closure."""
+    """A reply addresses a loop when one of its sentences is about the same thing and settles it: says it was done or
+    dropped, or asks it again. Mentioning the subject is not settling it: "my earlier warning about Hermes stands" once
+    closed the day-1 offer to save the Hermes changes, and the offer was never made again (nontech week, v0.5.0)."""
     want = _content(loop)
-    return len(want) >= 2 and len(want & _content(reply)) >= min(3, len(want))  # a one-word loop is retired by the cap, not by a mention
+    if len(want) < 2:
+        return False  # a one-word loop is retired by the cap, not by a mention
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", reply):
+        if len(want & _content(sentence)) >= min(2, len(want)) and (_SETTLED.search(sentence) or sentence.rstrip().endswith("?")):
+            return True
+    return False
 
 
 def previous_session(db: sqlite3.Connection, session: str, cwd: str, now: float | None = None) -> dict | None:

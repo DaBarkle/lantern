@@ -333,3 +333,22 @@ class HardeningTest(unittest.TestCase):
                 with mock.patch.object(hooks, "_log", side_effect=OSError("No space left on device")):
                     out = hooks._crashed("stop", OSError("No space left on device"))
                 self.assertIn("disk is full", out["systemMessage"])
+
+
+class LoopsTest(unittest.TestCase):
+    def test_a_mention_does_not_close_an_offer(self):
+        from lantern_core import memory
+        offer = "Next, I can save the 17 Hermes changes as a version right now, which keeps everything on this machine"
+        self.assertFalse(memory.addresses("Hermes Orchestrator isn't covered either, so my earlier warning about it stands.", offer))
+        self.assertTrue(memory.addresses("I saved the 17 Hermes changes as a version (abc123).", offer))
+        self.assertTrue(memory.addresses("Do you still want me to save the Hermes changes as a version?", offer))  # asked again
+
+    def test_a_bare_question_keeps_what_it_is_about(self):
+        from lantern_core import memory
+        loops = memory.open_loops("Hermes has 17 unsaved changes. Next, I can save them as a version right now. Want me to?")
+        self.assertEqual(loops, ["Next, I can save them as a version right now. Want me to?"])
+
+    def test_offers_outlast_small_talk_when_a_reply_has_many(self):
+        from lantern_core import memory
+        reply = "Next, I can save the Hermes changes now. " + " ".join(f"Is item {n} right?" for n in range(12))
+        self.assertIn("Next, I can save the Hermes changes now", memory.open_loops(reply))
