@@ -314,12 +314,12 @@ def session_start(payload: dict) -> dict | None:
         discovery.update_settings(since_last={**(discovery.settings().get("since_last") or {}), "bigfiles": bigfiles})
     if found_new:
         tail_block += [found_new]
-    tail_block += [open_block]
+    tail_block += [register.say(open_block)]
     if not first:
         at = discovery.settings().get("insights_at")
         tail_block += [f"You already know the state of this machine: Lantern's watches (failed services, disk, unpushed work, known "
                   f"services, backup jobs, new scheduled jobs) ran at {time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}"
-                  f" and found: {watches}. When the user asks whether things are OK, that is the answer: say it in plain words first "
+                  f" and found: {register.say(watches)}. When the user asks whether things are OK, that is the answer: say it in plain words first "
                   "(what is failing, what is fine), then look deeper only if useful. A declined or failed command never leaves the "
                   "user without an answer; you have this one. Duties beyond these watches: a read-only one is on from the moment it is named; "
                   "only a duty that changes the machine stays a proposal until the user says yes. Say which is which."]
@@ -773,7 +773,7 @@ def snapshot_line(at: float) -> str:
         open_block = insights.open_block(db)
     finally:
         db.close()
-    return (f"Lantern's watches ran at {time.strftime('%H:%M', time.localtime(at))} and found: {watches}. {open_block}")
+    return register.say(f"Lantern's watches ran at {time.strftime('%H:%M', time.localtime(at))} and found: {watches}. {open_block}")  # plain names for a plain reader
 
 
 def stop_nudge(payload: dict) -> dict | None:

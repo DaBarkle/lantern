@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from .paths import ensure_data_dir
+from .paths import ensure_data_dir, write_atomic
 
 SERVER = "https://ntfy.sh"
 POLL_SECONDS = 10  # ntfy.sh answers 429 to a poll every few seconds
@@ -23,7 +23,8 @@ def ready() -> str | None:
     would wait on a phone that is not listening. None when approvals are set up."""
     if (ensure_data_dir() / "approvals.json").exists():
         return None
-    return "phone approvals aren't set up yet: show the ntfy topic with `lantern approve setup`, subscribe in the app, then ask again"
+    return ("the phone is not linked yet: run `approve setup` yourself, show the user its two steps for the ntfy app in plain "
+            "words, then ask again")
 
 
 def config() -> dict:
@@ -32,11 +33,9 @@ def config() -> dict:
         return json.loads(path.read_text())
     except (OSError, ValueError):
         cfg = {"server": SERVER, "topic": "lantern-" + secrets.token_urlsafe(18)}
-        path.write_text(json.dumps(cfg))
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass  # Windows: the per-user data folder already limits access
+        if path.exists():  # unreadable but there: never replace the topic the phone is subscribed to, never post blind
+            raise OSError(f"{path} could not be read; the phone channel is paused until it can")
+        write_atomic(path, json.dumps(cfg), private=True)
         return cfg
 
 

@@ -28,11 +28,8 @@ def _token_path(data: Path) -> Path:
 def write_token(data: Path) -> str:
     token = secrets.token_hex(16)
     path = _token_path(data)
-    path.write_text(token)
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass  # Windows: the per-user data folder already limits access
+    from .paths import write_atomic
+    write_atomic(path, token, private=True)
     return token
 
 

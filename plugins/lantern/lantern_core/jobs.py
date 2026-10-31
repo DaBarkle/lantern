@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from . import curate, resources
-from .paths import ensure_data_dir, uv
+from .paths import ensure_data_dir, uv, write_atomic
 
 DUE = {"curate": 20 * 3600, "doctor": 20 * 3600, "discover": 20 * 3600}  # a little under a day, so a daily session always triggers them
 LOCK_SECONDS = 2 * 3600
@@ -39,7 +39,7 @@ def mark(job: str, key: str, now: float | None = None) -> None:
     d = ensure_data_dir()
     st = _state()
     st[f"{job}_{key}"] = now or time.time()
-    (d / "jobs.json").write_text(json.dumps(st))
+    write_atomic(d / "jobs.json", json.dumps(st))
 
 
 def start(jobs: list[str], entry: Path) -> list[str]:

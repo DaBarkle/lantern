@@ -8,6 +8,20 @@ import sys
 from pathlib import Path
 
 
+def write_atomic(path: Path, text: str, private: bool = False) -> None:
+    """Write a whole file or nothing: a reader in another session never sees half of it, and a full disk leaves the old
+    copy whole. (In-place writes let a torn read of settings.json come back empty and the next save wipe it.)"""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        if private and sys.platform != "win32":
+            tmp.chmod(0o600)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 PROFILE_FILE = ".lantern.json"  # {"profile": "work"} in a folder (or a parent) keeps that folder's memory apart
 
 

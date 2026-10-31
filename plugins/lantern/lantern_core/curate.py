@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import memory
-from .paths import ensure_data_dir
+from .paths import ensure_data_dir, write_atomic
 
 MODEL = "haiku"
 MAX_CHARS = 60000  # one call's worth of turns
@@ -109,7 +109,7 @@ def run(now: float | None = None, ask=_ask) -> int:
         turns = [t for (t,) in db.execute("SELECT text FROM items WHERE kind='turn' AND created > ? AND created <= ? "
                                           "ORDER BY created", (since, now))]
         if not turns:
-            state_path.write_text(json.dumps({"until": now}))
+            write_atomic(state_path, json.dumps({"until": now}))
             return 0
         known = memory.rule_items(db)[:200] + [(i, t.strip().splitlines()[0][:300]) for i, t in db.execute(
             "SELECT id, text FROM items WHERE kind IN ('profile', 'routine') AND status='active' ORDER BY created DESC LIMIT 40")]
@@ -141,7 +141,7 @@ def run(now: float | None = None, ask=_ask) -> int:
                 added += 1
     finally:
         db.close()
-    state_path.write_text(json.dumps({"until": now}))
+    write_atomic(state_path, json.dumps({"until": now}))
     return added
 
 

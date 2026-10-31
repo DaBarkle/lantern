@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from . import memory
-from .paths import ensure_data_dir
+from .paths import ensure_data_dir, write_atomic
 
 DEV_TOOLS = ["git", "gh", "uv", "python3", "node", "npm", "cargo", "go", "java", "dotnet", "code", "nvim", "vim", "tmux", "zsh", "fish",
              "docker", "podman", "kubectl", "terraform", "aws", "gcloud", "az", "brew", "distrobox", "winget"]
@@ -56,7 +56,7 @@ def settings() -> dict:
 
 
 def save_settings(s: dict) -> None:
-    settings_path().write_text(json.dumps(s, indent=2))
+    write_atomic(settings_path(), json.dumps(s, indent=2))
 
 
 def update_settings(**kv) -> dict:

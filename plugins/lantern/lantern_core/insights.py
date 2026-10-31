@@ -228,7 +228,9 @@ def _why_resolved(key: str) -> str:
         return f"{rest.split(':', 1)[-1]}: now responding"
     if kind == "disk":
         return "disk: now below the warning level"
-    return key
+    if kind == "own-job":
+        return f"Lantern's own {rest} job: running cleanly again"
+    return f"{_name(key)}: no longer seen"  # never an internal key in front of the user
 
 
 def _present(key: str) -> bool:

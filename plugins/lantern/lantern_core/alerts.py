@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from . import approvals, discovery, schedule, stage
-from .paths import data_dir, ensure_data_dir
+from .paths import data_dir, ensure_data_dir, write_atomic
 
 KINDS = ("failed", "down", "disk", "backup")  # worth a buzz; project work does not change while the user is away
 MAX_LINES = 5  # per run; further new findings fold into one line
@@ -29,7 +29,7 @@ def _state() -> dict:
 
 
 def _save(st: dict) -> None:
-    (ensure_data_dir() / "alerts.json").write_text(json.dumps(st))
+    write_atomic(ensure_data_dir() / "alerts.json", json.dumps(st))
 
 
 def open_findings(db) -> dict[str, str]:
@@ -55,7 +55,10 @@ def run(db, send: bool = True, now: float | None = None) -> list[str]:
         st["heard"] = current  # nothing to send: what is open now counts as heard, so a later switch-on is not a flood
         _save(st)
         return lines
-    cfg = approvals.config()
+    try:
+        cfg = approvals.config()
+    except OSError:
+        return lines  # the channel's file is unreadable: nothing sent, nothing marked heard; the doctor says why
     new = [k for k in current if k not in heard]
     gone = [k for k in heard if k not in current]
     try:
@@ -103,7 +106,8 @@ def status() -> str:
     s = settings()
     at = _state().get("ran")
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(at)) if at else "never"
-    channel = "sends to the phone" if approvals.ready() is None else "needs phone approvals set up first (`approve setup`)"
+    channel = ("sends to the phone" if approvals.ready() is None else "the phone is not linked yet (if the user wants alerts, run "
+               "`approve setup` yourself and show its two steps in plain words; never ask the user to run or type anything)")
     timer = "hourly check scheduled" if discovery.settings().get("watch_scheduled") else "hourly check not scheduled here (session starts and the nightly doctor still check)"
     return (f"phone alerts {'on' if s['on'] else 'off'} for newly tripped watches ({', '.join(s['kinds'])}); "
             f"{channel}; {timer}; last watch check {when}")

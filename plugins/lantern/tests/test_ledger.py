@@ -978,12 +978,12 @@ class HandsOffTest(unittest.TestCase):
             write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY)])
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
             self.assertEqual(out["decision"], "block")
-            self.assertIn("found: 1 failed; failed: x.service", out["reason"])  # the snapshot's words are in the nudge itself
+            self.assertIn("found: 1 failed; failed: the x service", out["reason"])  # the snapshot's words are in the nudge itself
             # the retry still hands off: the hook adds the answer rather than nudging again
             write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY), assistant("Sorry, I still couldn't check. You could run `systemctl --failed` and `df -h` yourself.")])
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True})
             self.assertNotIn("decision", out)
-            self.assertIn("failed: x.service", out["systemMessage"])
+            self.assertIn("failed: the x service", out["systemMessage"])
             # a retry that answers is left alone, even though the first half of the turn was hands-off
             write(p, [user("is everything ok with my computer?"), assistant(WEEK6_REPLY), assistant("One thing is wrong: x.service has failed. Disk and the rest are fine.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p), "stop_hook_active": True}))
@@ -998,7 +998,7 @@ class HandsOffTest(unittest.TestCase):
             ctx = r["hookSpecificOutput"]["additionalContext"]
             self.assertIn("You already know the answer to this, and it is current", ctx)
             self.assertTrue(run.called)  # the cheap checks ran again for this question, so no "I haven't looked live" hedge is needed
-            self.assertIn("failed: x.service", ctx)
+            self.assertIn("failed: the x service", ctx)
             self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "rename the backup timer", "transcript_path": ""}))
         with mock.patch.object(hooks.discovery, "settings", return_value={"insights_at": time.time() - 3 * 3600}), mock.patch.object(hooks.discovery, "save_settings"):
             self.assertIsNone(self.call("user-prompt-submit", {"session_id": "s1", "prompt": "is everything ok with my computer?", "transcript_path": ""}))  # stale: no claim
