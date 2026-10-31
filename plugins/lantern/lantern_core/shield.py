@@ -23,6 +23,7 @@ PATTERNS = [
     ("API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{20,}")),
+    ("1Password service account token", re.compile(r"\bops_[A-Za-z0-9_-]{40,}")),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
     # name = value, where the value is a long literal with letters and digits; $VAR, ${VAR} and calls don't match
     ("password or token", re.compile(
@@ -112,14 +113,34 @@ MANAGERS = {"op": ("op", "1Password", "op://vault/item/field"),
             "pass": ("pass", "pass", "pass://path/in/store"),
             "keepass": ("keepassxc-cli", "KeePassXC", "keepass:///path/to/db.kdbx/group/entry")}
 # What a locked manager needs, held in the keychain like any other secret, so a session never types it.
-UNLOCK = {"bw": "BW_SESSION", "keepass": "KEEPASSXC_PASSWORD"}
+UNLOCK = {"bw": "BW_SESSION", "keepass": "KEEPASSXC_PASSWORD", "op": "OP_SERVICE_ACCOUNT_TOKEN"}  # op: a read-only service account
+
+
+def op_vault() -> str:
+    """The one 1Password vault Lantern may read, when the user pinned one ('' = any the account can see)."""
+    try:
+        return json.loads((ensure_data_dir() / "op-vault.json").read_text()).get("vault", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def op_allowed(ref: str) -> bool:
+    """A reference outside the pinned vault is never read, whatever the account could see."""
+    pinned = op_vault()
+    vault = ref.partition("://")[2].split("/", 1)[0]
+    return not pinned or vault.lower() == pinned.lower()
 
 
 def _read(ref: str, kr) -> str | None:
     scheme, _, rest = ref.partition("://")
     env, stdin = dict(os.environ), None
     if scheme == "op":
-        cmd = ["op", "read", ref]
+        if not op_allowed(ref):
+            return None
+        cmd = ["op", "read", "--no-newline", ref]
+        token = kr.get_password(SERVICE, UNLOCK["op"]) if kr is not None else None
+        if token:  # the service account's token, from the keychain, for this one call only
+            env["OP_SERVICE_ACCOUNT_TOKEN"] = token
     elif scheme == "bw":
         item, _, field = rest.partition("/")
         cmd = ["bw", "get", field or "password", item]
@@ -144,13 +165,17 @@ def _read(ref: str, kr) -> str | None:
 def _ready(scheme: str, held: set[str]) -> tuple[bool, str, str]:
     """Whether a manager can answer now; if not, why and the one-line ask."""
     if scheme == "op":
+        if UNLOCK["op"] in held:  # a service account: its token is in the keychain, no sign-in or prompt ever
+            return True, "", ""
         try:  # `account list` needs no unlock, so a session start never pops the 1Password prompt; `op read` does, once, when a command needs it
             r = subprocess.run(["op", "account", "list"], capture_output=True, text=True, timeout=10)
             ok = r.returncode == 0 and bool(r.stdout.strip())
         except (OSError, subprocess.TimeoutExpired):
             ok = False
         return ok, "the 1Password CLI is installed but no account is added to it", \
-            "add it once (`op account add`, or turn on the desktop app's CLI integration); Lantern then reads linked items at run time"
+            ("the safest way is a read-only service account limited to one vault: the user makes it on 1password.com, then "
+             "Lantern asks for its token with `secret ask OP_SERVICE_ACCOUNT_TOKEN` (it goes straight to the keychain) and pins the "
+             "vault with `secret op-vault NAME`; or the desktop app's CLI integration")
     if scheme == "bw":
         ok = UNLOCK["bw"] in held or bool(os.environ.get("BW_SESSION"))
         return ok, "the Bitwarden CLI is installed but its vault is locked", \
@@ -185,11 +210,12 @@ def manager_status() -> dict:
         ok, why, ask = _ready(scheme, held)
         managers.append({"scheme": scheme, "tool": tool, "name": name, "path": where, "form": form, "ready": ok,
                          "why": "" if ok else why, "ask": "" if ok else ask})
-    return {"managers": managers, "keychain": keychain_missing() is None, "stored": names(), "linked": links()}
+    return {"managers": managers, "keychain": keychain_missing() is None, "stored": names(), "linked": links(),
+            "op_vault": op_vault()}
 
 
 PASTE = re.compile(r"^\s*secret\s+([A-Za-z][A-Za-z0-9_]{0,63})\s*[:=]\s*(\S{4,})\s*$")
-BARE = re.compile(r"^\s*(\S{8,512})\s*$")  # a value pasted on its own, once Lantern has asked for one
+BARE = re.compile(r"^\s*(\S{8,4096})\s*$")  # a 1Password service account token runs to ~900 characters  # a value pasted on its own, once Lantern has asked for one
 ASK_SECONDS = 600  # an ask is answered by the next message or not at all: a bare word ten minutes later is not a secret
 
 
@@ -248,6 +274,13 @@ def cli(argv: list[str]) -> int:
         st = manager_status()
         print(json.dumps({**st, "stored": len(st["stored"]), "linked": len(st["linked"])}, indent=1))
         return 0
+    if argv[:1] == ["op-vault"] and len(argv) == 2:
+        write_atomic(ensure_data_dir() / "op-vault.json", json.dumps({"vault": argv[1]}))
+        print(f"Lantern reads 1Password items from the {argv[1]} vault only")
+        return 0
+    if argv[:1] == ["link"] and len(argv) == 3 and argv[2].startswith("op://") and not op_allowed(argv[2]):
+        print(f"lantern: {argv[2]} is outside the {op_vault()} vault Lantern is pinned to; not linked", file=sys.stderr)
+        return 1
     if argv[:1] == ["link"] and len(argv) == 3 and argv[2].partition("://")[0] in MANAGERS:
         write_atomic(_links_file(), json.dumps({**links(), argv[1]: argv[2]}))
         print(f"{argv[1]} will be read from {MANAGERS[argv[2].partition('://')[0]][1]} when a command needs it")

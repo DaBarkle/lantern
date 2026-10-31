@@ -219,3 +219,38 @@ class SecretHandoverTest(unittest.TestCase):
         self.assertEqual(reply["decision"], "block")
         self.assertIn("no keychain", reply["reason"])
         self.assertNotIn("abc123XYZtoken", json.dumps(reply))
+
+
+class OnePasswordServiceAccountTest(unittest.TestCase):
+    def test_token_from_keychain_vault_pinned(self):
+        from lantern_core import shield
+        token = "ops_" + "eyJ" + "a1B2" * 220  # about 900 characters, like a real one
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            self.assertEqual(shield.find(f"here it is {token}"), ["1Password service account token"])  # never stored as memory
+            shield.ask("OP_SERVICE_ACCOUNT_TOKEN")
+            kr = mock.MagicMock()
+            kr.get_password.side_effect = lambda svc, name: token if name == "OP_SERVICE_ACCOUNT_TOKEN" else None
+            with mock.patch.object(shield, "_keyring", return_value=kr):
+                name, stored = shield.paste(token)  # the long token pasted on its own is caught, not passed to the model
+            self.assertEqual(name, "OP_SERVICE_ACCOUNT_TOKEN")
+            self.assertTrue(stored)
+            self.assertEqual(shield.cli(["op-vault", "Hermes"]), 0)
+            self.assertTrue(shield.op_allowed("op://Hermes/Plex/token"))
+            self.assertTrue(shield.op_allowed("op://hermes/Plex/token"))
+            self.assertFalse(shield.op_allowed("op://Private/Bank/password"))
+            self.assertEqual(shield.cli(["link", "BANK", "op://Private/Bank/password"]), 1)  # outside the vault: refused
+            seen = {}
+
+            def run(cmd, **kw):
+                seen.update(cmd=cmd, env=kw["env"])
+                return mock.Mock(returncode=0, stdout="s3cret\n")
+
+            with mock.patch.object(shield.subprocess, "run", side_effect=run):
+                self.assertEqual(shield._read("op://Hermes/Plex/token", kr), "s3cret")
+                self.assertEqual(seen["env"]["OP_SERVICE_ACCOUNT_TOKEN"], token)  # from the keychain, for this call only
+                self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", os.environ)
+                seen.clear()
+                self.assertIsNone(shield._read("op://Private/Bank/password", kr))
+                self.assertEqual(seen, {})  # never even asked
+            with mock.patch.object(shield, "names", return_value=["OP_SERVICE_ACCOUNT_TOKEN"]):
+                self.assertEqual(shield._ready("op", {"OP_SERVICE_ACCOUNT_TOKEN"})[0], True)
