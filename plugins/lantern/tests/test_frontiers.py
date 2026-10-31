@@ -116,7 +116,7 @@ class BridgeTest(unittest.TestCase):
             st = shield.manager_status()
         self.assertEqual([(m["tool"], m["ready"]) for m in st["managers"]], [("op", False)])
         self.assertIn("no account", st["managers"][0]["why"])
-        self.assertIn("op account add", st["managers"][0]["ask"])
+        self.assertIn("service account limited to one vault", st["managers"][0]["ask"])
 
 
 class SshKeyTest(unittest.TestCase):
