@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (0.5.0)
+
+Lantern learns from ordinary use. Nothing to run, no simulations, no extra model calls per turn.
+
+- The nightly curate reads the whole day in up to four parts. Before, a heavy day lost everything but its newest part.
+- A rule you have to say again is counted. It moves to the top of the rules and says how many times you said it.
+- Recall counts which notes get used. The notes you keep needing stay in every session's index, and unused ones age out.
+- Checks you keep asking for become routines. A session runs the read-only ones without being asked.
+- A note that replaces an older one says so, so the next session tells you what changed instead of quietly reversing itself.
+- One approval, never two: a yes given in the question tool covers the restart a rule guards. The container guard's dialog speaks to you.
+- An unfinished item that points at its own reply ("the first warning above") keeps the request it came from.
+- A Stop-hook follow-up reads as the reply's next paragraph, not as a correction of it.
+
 ## 0.4.0 (2026-10-31)
 
 Measured against simulated weeks on a real machine; the first session is stronger and the sessions after it are honest.

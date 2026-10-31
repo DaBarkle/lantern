@@ -273,7 +273,8 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
                   "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]
     if learned and not first:
-        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up):"]
+        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up; a "
+                  "'changed' item replaces what Lantern held before: if a past reply told the user the old version, say it changed):"]
         lines += [f"- {l}" for l in learned]
     if own:
         lines += ["", "This session's working memory (from before the compaction):",
@@ -795,13 +796,15 @@ def stop_nudge(payload: dict) -> dict | None:
     gaps = _UNCHECKED.findall(turn["reply"])
     if offers or gaps:
         asks.append("run the read-only checks the reply only offers or admits skipping (" + "; ".join('\"' + g.strip() + '\"' for g in (offers + gaps)[:5])
-                    + ") now, and state what each showed in one sentence each, starting \"Checked after all:\"; if nothing here can answer one, "
+                    + ") now, and state what each showed in one sentence each, starting \"Also checked:\"; if nothing here can answer one, "
                     "say in one clause what would")
     if not asks:
         return None
     return {"decision": "block", "reason": "Before this reply stands, in ONE short follow-up (never a second): "
             + " ".join(f"({i}) {a}." for i, a in enumerate(asks, 1))
-            + " Never mention this note, hooks or Lantern internals to the user; the user sees only your words."}
+            + " The follow-up shows right under the reply, so write it as the reply's next paragraph: add only what is new, never "
+            "restate the reply, apologise or call it a correction (if a line above was wrong, name that line and give the right value "
+            "once). Never mention this note, hooks or Lantern internals to the user; the user sees only your words."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
@@ -820,6 +823,9 @@ def subagent_stop(payload: dict) -> dict | None:
 
 
 _DISRUPT = re.compile(r"\b(?:systemctl(?:\s+--user)?\s+(?:restart|stop|kill|disable)|(?:podman|docker)\s+(?:restart|stop|kill|rm)|flatpak\s+kill)\s+(?:-\S+\s+)*([^\s;&|]+)")
+
+
+_GO = re.compile(r"\s*(?:yes|yep|ok(?:ay)?|sure|go ahead|do it|restart|stop|approve|allow)\b", re.I)
 
 
 def rule_guard(payload: dict) -> dict | None:
@@ -842,9 +848,12 @@ def rule_guard(payload: dict) -> dict | None:
     hit = next((r for r in rules if any(w in r.lower() for w in words)), None)
     if not hit:
         return None
-    said = transcript.last_turn(payload.get("transcript_path", ""))["reply"].lower()
+    turn = transcript.last_turn(payload.get("transcript_path", ""))
+    said = turn["reply"].lower()
     if "your rule" in said or hit[:40].lower() in said:
         return None  # quoted in this turn; the user's go-ahead stands
+    if any(any(w in q.lower() for w in words) and _GO.match(a) for q, a in turn.get("answers", [])):
+        return None  # the user already said yes to this in the question tool this turn: one approval, never two
     verb = re.search(r"restart|stop|kill|disable|rm\b", m.group(0)) or re.search(r"\w+", m.group(0))
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",  # this text is what the user reads in the dialog
             "permissionDecisionReason": f'Your rule: "{hit}". Lantern is checking with you before this {verb.group(0)}.'}}

@@ -11,7 +11,7 @@ DESTROY = re.compile(ENGINE + r"(?:(?:container|image|volume|network|system|buil
 
 
 def check(command: str) -> str | None:
-    return ("Lantern's container pack: this command deletes containers, images or volumes. Confirm with the user first."
+    return ("This deletes containers, images or volumes, and what they hold may not come back. Allow it only if you meant to."
             if DESTROY.search(command or "") else None)
 
 

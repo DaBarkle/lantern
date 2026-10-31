@@ -260,3 +260,15 @@ class UnifiPackTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuardWordingTest(unittest.TestCase):
+    def test_the_dialog_speaks_to_the_user(self):
+        from importlib import util
+        spec = util.spec_from_file_location("g", Path(__file__).resolve().parents[1] / "packs" / "docker" / "guard.py")
+        g = util.module_from_spec(spec)
+        spec.loader.exec_module(g)
+        text = g.check("podman image prune -a")
+        self.assertNotIn("Lantern", text)
+        self.assertNotIn("the user", text)  # the person reading the dialog is the user
+

@@ -203,7 +203,13 @@ def learned_since(db: sqlite3.Connection, since: float, limit: int = 6) -> list[
     """Rules, facts, patterns and profile lines curated or stated since a time, newest first (not discovery cards)."""
     rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile','routine') AND status='active' "
                       "AND created > ? AND source NOT LIKE 'discovery:%' ORDER BY created DESC LIMIT ?", (since, limit))
-    return [f"[{k}] {t.strip().splitlines()[0][:160]}" for k, t in rows if t.strip()]
+    out = []
+    for k, t in rows:
+        if not t.strip():
+            continue
+        was = re.search(r"Replaces the earlier note: (.+)", t)
+        out.append(f"[{k}, changed] {t.strip().splitlines()[0][:160]} (was: {was.group(1)[:120]})" if was else f"[{k}] {t.strip().splitlines()[0][:160]}")
+    return out
 
 
 def rule_items(db: sqlite3.Connection) -> list[tuple[int, str]]:
@@ -240,7 +246,9 @@ def ledger_update(db: sqlite3.Connection, session: str, cwd: str, turn: dict, no
     d["reply"] = carry(turn.get("reply", ""), 600)  # the end carries the next steps; hedged sentences are kept whole
     reply = turn.get("reply", "")
     kept = [l for l in d.get("loops", []) if not addresses(reply, l)]  # done, re-asked or retired
-    d["loops"] = list(dict.fromkeys(kept + [l for l in open_loops(reply) if not closed_later(reply, l)]))[-LOOPS_KEEP:]
+    request = turn["user"] if len(terms(turn["user"])) >= 4 else d["goal"]  # "and now?" says less than what the session set out to do
+    fresh = [anchor(l, request) for l in open_loops(reply) if not closed_later(reply, l)]
+    d["loops"] = list(dict.fromkeys(kept + fresh))[-LOOPS_KEEP:]
     with db:
         # cwd stays the folder the session started in: a `cd` mid-session must not make the next session in this folder skip it
         db.execute("INSERT INTO ledger VALUES (?, ?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET "
@@ -277,6 +285,17 @@ def carry(text: str, limit: int) -> str:
     return out
 
 
+_POINTER = re.compile(r"\b(?:above|below|earlier|the (?:first|second|last|other) one|that one|this one|those|these|it|them|that)\b", re.I)
+
+
+def anchor(loop: str, request: str) -> str:
+    """A loop that points at something in its own reply ("withdraw the first warning above") is meaningless a day later:
+    it carries the request it came from, so the next session knows what it was about."""
+    if not request or (_content(loop) and not _POINTER.search(loop)):
+        return loop
+    return f"{loop} (from the request: \"{request.strip().splitlines()[0][:100]}\")"
+
+
 def open_loops(reply: str, limit: int = 8) -> list[str]:
     """Promises, gaps, offers and questions the assistant stated in its reply ("I didn't check X", "Next, I can Y",
     "Should I Z?"), so the next session closes or re-asks them instead of repeating them."""
@@ -292,7 +311,7 @@ def _content(text: str) -> set[str]:
     return {w for w in terms(text) if any(c in w for c in "./-_0123456789") or (len(w) >= 5 and w not in _GENERIC)}
 
 
-_CLOSED_LATER = re.compile(r"Checked after all|now (?:checked|confirmed|looked|verified)|I've now|I have now", re.I)
+_CLOSED_LATER = re.compile(r"Also checked|Checked after all|now (?:checked|confirmed|looked|verified)|I've now|I have now", re.I)
 
 
 def closed_later(reply: str, loop: str) -> bool:

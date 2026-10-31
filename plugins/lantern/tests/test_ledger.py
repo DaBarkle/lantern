@@ -412,6 +412,38 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(sum(1 for _ in db.execute("SELECT 1 FROM items WHERE kind='rule' AND text LIKE 'don''t restart plex%'")), 1)
         db.close()
 
+    def test_a_yes_in_the_question_tool_is_the_only_approval(self):
+        db = memory.connect()
+        memory.add(db, "rule", "said:s0", "never restart Plex without asking me first")
+        db.close()
+        p = Path(self.tmp.name) / "q.jsonl"
+        answer = lambda a: {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t0",
+                            "content": f'User has answered your questions: "Restart Plex now? Nobody is streaming."="{a}". Continue.'}]}}
+        call = lambda: hooks.rule_guard({"tool_name": "Bash", "tool_input": {"command": "systemctl --user restart container-plex.service"},
+                                         "transcript_path": str(p)})
+        write(p, [user("plex is stuck"), assistant("Checking.", ("AskUserQuestion", {})), answer("Yes, restart it")])
+        self.assertIsNone(call())  # said yes once; no second dialog
+        write(p, [user("plex is stuck"), assistant("Checking.", ("AskUserQuestion", {})), answer("No, leave it")])
+        self.assertEqual(call()["hookSpecificOutput"]["permissionDecision"], "ask")
+        write(p, [user("plex is stuck"), assistant("Checking.", ("AskUserQuestion", {})), answer("Yes, restart it"), user("now restart plex again")])
+        self.assertEqual(call()["hookSpecificOutput"]["permissionDecision"], "ask")  # an earlier turn's yes is not this turn's
+
+    def test_a_loop_that_points_at_its_reply_keeps_what_it_was_about(self):
+        self.assertEqual(memory.anchor("Should I withdraw the first warning above?", "review the disk warnings on bazzite"),
+                         'Should I withdraw the first warning above? (from the request: "review the disk warnings on bazzite")')
+        self.assertEqual(memory.anchor("I didn't check the plex journal yet", "x y z w"), "I didn't check the plex journal yet")
+
+    def test_a_changed_note_says_what_it_replaced(self):
+        db = memory.connect()
+        memory.add(db, "fact", "curate:a", "Backups run at 02:00 nightly.", created=time.time() - 86400)
+        memory.add(db, "turn", "s1", "User: the backup moved to 04:00\nAssistant: noted", created=time.time() - 60)
+        db.close()
+        from lantern_core import curate
+        curate.run(ask=lambda p: [{"kind": "fact", "summary": "Backups run at 04:00 nightly.", "detail": "Moved by the user."}])
+        db = memory.connect()
+        self.assertIn("[fact, changed] Backups run at 04:00 nightly. (was: Backups run at 02:00 nightly.)", memory.learned_since(db, time.time() - 3600))
+        db.close()
+
     def test_subagent_result_is_captured(self):
         p = Path(self.tmp.name) / "agent.jsonl"
         write(p, [user("check the logs"), assistant("Found: sshd is rejecting key type ssh-rsa since the 9.8 upgrade.")])
@@ -818,12 +850,12 @@ class HeadlessCaptureTest(unittest.TestCase):
             write(p, [user("check the plex unit"), assistant("Done. I didn't check the journal yet."), user("and now?"), assistant("Next, I can read it.")])
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 hooks.user_prompt_submit({"prompt": "go", "session_id": "s1", "transcript_path": str(p), "cwd": d})
-            self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # accumulated
+            self.assertEqual(memory.ledger_get(db, "s1")["loops"], ["I didn't check the journal yet", 'Next, I can read it (from the request: "check the plex unit")'])  # accumulated; "it" carries what it was about
             # the next session inherits the unfinished items and closes the one its reply addresses
             write(p, [user("read the journal"), assistant("The plex journal shows a bind failure on port 32400.")])
             with mock.patch.object(hooks.semantic, "search", return_value=None):
                 hooks.user_prompt_submit({"prompt": "ok", "session_id": "s2", "transcript_path": str(p), "cwd": d})
-            self.assertEqual(memory.ledger_get(db, "s2")["loops"], ["I didn't check the journal yet", "Next, I can read it"])  # one shared word is a mention, not a closure
+            self.assertEqual(memory.ledger_get(db, "s2")["loops"], ["I didn't check the journal yet", 'Next, I can read it (from the request: "check the plex unit")'])  # one shared word is a mention, not a closure
             self.assertTrue(memory.addresses("I read the plex journal: a bind failure on port 32400, container-plex holds it.", "I didn't check the plex journal for the bind failure on 32400"))
             self.assertFalse(memory.addresses("The fix is a localhost bind or a firewall rule on 6006.", "I didn't check whether a firewall already blocks port 6006 from the LAN"))
             db.close()

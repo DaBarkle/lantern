@@ -132,8 +132,9 @@ def run(now: float | None = None, ask=_ask) -> int:
                     if i is not None:
                         memory.supersede(db, i)
                 known = [(i, k) for i, k in known if (i, k) not in same]
+                replaced = next((k for i, k in same if i is not None), "")  # said out loud next session, so a day-1 claim is never silently reversed
                 new_id = memory.add(db, it["kind"], f"curate:{time.strftime('%Y-%m-%d', time.localtime(now))}:{added}",
-                                    f"{summary}\n\n{it['detail'].strip()}", created=now)
+                                    f"{summary}\n\n{it['detail'].strip()}" + (f"\nReplaces the earlier note: {replaced}" if replaced else ""), created=now)
                 for _ in range(repeats + bool(it.get("retaught"))):  # a restated rule keeps the weight the user gave it
                     memory.used(db, [new_id], "repeated", now)
                 known.append((new_id, summary))
