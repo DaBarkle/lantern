@@ -64,12 +64,12 @@ def check_semantic():
             age = time.time() - marker.stat().st_mtime
         except OSError:
             age = None
-        if age is not None and WARM_SECONDS < age < START_EVERY:
-            why = ""
-            try:
-                why = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1][:160]
-            except (OSError, IndexError):
-                pass
+        why = ""
+        try:
+            why = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1][:160]
+        except (OSError, IndexError):
+            pass
+        if age is not None and WARM_SECONDS < age < START_EVERY and not why.startswith("lantern serve: exiting"):  # a planned exit is not a failure
             return WARN, (f"memory server did not come up after its last start ({why or 'no error written'}; full log in {log}); "
                           "recall is keyword-only on this machine")
         try:

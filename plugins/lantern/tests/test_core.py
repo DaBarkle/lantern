@@ -352,3 +352,18 @@ class LoopsTest(unittest.TestCase):
         from lantern_core import memory
         reply = "Next, I can save the Hermes changes now. " + " ".join(f"Is item {n} right?" for n in range(12))
         self.assertTrue(memory.open_loops(reply)[0].startswith("Next, I can save the Hermes changes now"))  # first, not cut by the cap
+
+
+class ServeWatchdogTest(unittest.TestCase):
+    def test_a_server_stops_when_idle_old_or_out_of_date(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("serve_under_test", Path(__file__).resolve().parents[1] / "serve.py")
+        if importlib.util.find_spec("numpy") is None:
+            sys.modules.setdefault("numpy", mock.MagicMock())  # the decision under test needs no numpy
+        serve = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(serve)
+        ok = dict(idle_s=60, age_s=3600, code_then=1.0, code_now=1.0, port=48878, port_now=48878, token="a", token_now="a")
+        self.assertIsNone(serve.stale(**ok))
+        for change, words in ((dict(idle_s=serve.IDLE_SECONDS + 1), "no search"), (dict(age_s=13 * 3600), "fresh one"),
+                              (dict(code_now=2.0), "updated"), (dict(port_now=48906), "another port"), (dict(token_now="b"), "took over")):
+            self.assertIn(words, serve.stale(**{**ok, **change}), change)
