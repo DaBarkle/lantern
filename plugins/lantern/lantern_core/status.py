@@ -24,7 +24,7 @@ def line(now: float | None = None) -> str:
     db = memory.connect()
     try:
         total = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind != 'turn'").fetchone()[0]
-        learned = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind IN ('rule','fact','pattern','profile') "
+        learned = db.execute("SELECT count(*) FROM items WHERE status='active' AND kind IN ('rule','fact','pattern','profile','routine') "
                              "AND source NOT LIKE 'discovery:%' AND created > ?", (now - 86400,)).fetchone()[0]
         turns = db.execute("SELECT count(*) FROM items WHERE kind='turn' AND created > ?", (now - 86400,)).fetchone()[0]
         found = db.execute("SELECT count(*) FROM items WHERE status='active' AND source LIKE 'discovery:%' AND created > ?",

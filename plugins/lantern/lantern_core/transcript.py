@@ -52,15 +52,20 @@ def messages(path: str | Path, sidechain: bool = False) -> list[tuple[str, str]]
 def last_turn(path: str | Path) -> dict:
     """The last user message, the assistant text after it, and what tools did meanwhile:
     {"user", "reply", "last", "files", "commands", "agents", "failed"}."""
-    turn = {"user": "", "reply": [], "files": [], "commands": [], "agents": [], "failed": 0}
+    turn = {"user": "", "reply": [], "files": [], "commands": [], "agents": [], "failed": 0, "answers": []}
     for e in _entries(path):
         content = e.get("message", {}).get("content")
         text = _text(content).strip()
         blocks = content if isinstance(content, list) else []
         if e["type"] == "user":
             if text and not text.startswith(HOOK_FEEDBACK):  # a Stop hook's reason is written back as a user entry; the turn goes on
-                turn = {"user": text, "reply": [], "files": [], "commands": [], "agents": [], "failed": 0}
+                turn = {"user": text, "reply": [], "files": [], "commands": [], "agents": [], "failed": 0, "answers": []}
             turn["failed"] += sum(1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error"))
+            for b in blocks:  # what the user answered through the question tool during this turn
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    res = b["content"] if isinstance(b.get("content"), str) else _text(b.get("content"))
+                    if "answered" in res:
+                        turn["answers"] += _ANSWER.findall(res)
             continue
         if text:
             turn["reply"].append(text)

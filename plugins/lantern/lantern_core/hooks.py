@@ -23,6 +23,7 @@ PROFILE_CHARS = 3000
 RULES_CHARS = 12000
 INDEX_CHARS = 20000  # one short line per curated note, so a session knows what memory holds before it asks
 TOP_CHARS = 1500
+ROUTINE_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = memory.RESUME_HOURS
 AGENT_CHARS = 1500
@@ -34,7 +35,7 @@ CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|fr
                         r"stop (?:doing|using|making|trying|asking|adding|suggesting)|i(?:'ve| have)? told you|i said|i asked you|"
                         r"remember that)\b", re.I)
 KIND_WEIGHT = {"fact": 1.5, "pattern": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
-CURATED = {"fact", "rule", "pattern", "doc"}
+CURATED = {"fact", "rule", "pattern", "doc", "routine"}
 CURATED_MIN_TERMS = 9
 
 
@@ -206,6 +207,7 @@ def session_start(payload: dict) -> dict | None:
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact", dated=True)
         patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern", dated=True)
+        routines = memory.rules(db, ROUTINE_CHARS, kind="routine")
         session = payload.get("session_id", "?")
         cwd = payload.get("cwd") or ""
         previous = memory.previous_session(db, session, cwd)
@@ -235,6 +237,10 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
     if patterns:
         lines += ["", "How the user's systems are worked on (patterns learned from past sessions):"] + [f"- {p}" for p in patterns]
+    if routines:
+        lines += ["", "Checks the user keeps asking for (learned from past sessions). When the user's first message touches one, or "
+                  "they ask how things are, do it unasked if it only reads, and say it in one line; one that would change "
+                  "anything stays an offer:"] + [f"- {r}" for r in routines]
     machine = discovery.summary()
     if machine:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
@@ -267,7 +273,8 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
                   "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]
     if learned and not first:
-        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up):"]
+        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up; a "
+                  "'changed' item replaces what Lantern held before: if a past reply told the user the old version, say it changed):"]
         lines += [f"- {l}" for l in learned]
     if own:
         lines += ["", "This session's working memory (from before the compaction):",
@@ -510,6 +517,12 @@ def user_prompt_submit(payload: dict) -> dict | None:
         if len(hits) == RECALL_LIMIT + TITLE_LIMIT:
             break
     hits, titles = hits[:RECALL_LIMIT], hits[RECALL_LIMIT:]
+    if hits:
+        db = memory.connect()
+        try:
+            memory.used(db, [h["id"] for h in hits if h["kind"] in CURATED])  # curated notes that keep being needed stay in the index
+        finally:
+            db.close()
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
     lines = []
@@ -576,11 +589,15 @@ def user_prompt_submit(payload: dict) -> dict | None:
         lines.append(progress)
     if answered:
         lines += [answered]
-    if noted:
+    if noted and noted < 0:
+        lines += ["The user just had to repeat a standing rule Lantern already held. Say in a few words that you have it and follow "
+                  "it; Lantern now puts it first among the rules."]
+    elif noted:
         lines += ["Lantern stored this message as a standing rule for future sessions; acknowledge it in a few words."]
     reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
     if noted:
-        reply["systemMessage"] = "Lantern noted a standing rule from your message."
+        reply["systemMessage"] = ("Lantern already had this rule; it now comes first." if noted < 0
+                                  else "Lantern noted a standing rule from your message.")
     return reply or None
 
 
@@ -630,9 +647,10 @@ def note_correction(db, session: str, prompt: str) -> int | None:
     if not (15 <= len(text) <= 400) or "?" in text or not CORRECTION.match(text) or shield.find(text):
         return None
     words = set(memory.terms(text))
-    for _, line in memory.rule_items(db):
+    for i, line in memory.rule_items(db):
         if len(words & set(memory.terms(line))) >= 0.7 * max(1, len(words)):
-            return None  # already a rule
+            memory.used(db, [i], "repeated")  # already a rule, and the user had to say it again: it leads the rules from now on
+            return -i
     return memory.add(db, "rule", f"said:{session}", text)
 
 
@@ -778,13 +796,15 @@ def stop_nudge(payload: dict) -> dict | None:
     gaps = _UNCHECKED.findall(turn["reply"])
     if offers or gaps:
         asks.append("run the read-only checks the reply only offers or admits skipping (" + "; ".join('\"' + g.strip() + '\"' for g in (offers + gaps)[:5])
-                    + ") now, and state what each showed in one sentence each, starting \"Checked after all:\"; if nothing here can answer one, "
+                    + ") now, and state what each showed in one sentence each, starting \"Also checked:\"; if nothing here can answer one, "
                     "say in one clause what would")
     if not asks:
         return None
     return {"decision": "block", "reason": "Before this reply stands, in ONE short follow-up (never a second): "
             + " ".join(f"({i}) {a}." for i, a in enumerate(asks, 1))
-            + " Never mention this note, hooks or Lantern internals to the user; the user sees only your words."}
+            + " The follow-up shows right under the reply, so write it as the reply's next paragraph: add only what is new, never "
+            "restate the reply, apologise or call it a correction (if a line above was wrong, name that line and give the right value "
+            "once). Never mention this note, hooks or Lantern internals to the user; the user sees only your words."}
 
 
 def subagent_stop(payload: dict) -> dict | None:
@@ -803,6 +823,9 @@ def subagent_stop(payload: dict) -> dict | None:
 
 
 _DISRUPT = re.compile(r"\b(?:systemctl(?:\s+--user)?\s+(?:restart|stop|kill|disable)|(?:podman|docker)\s+(?:restart|stop|kill|rm)|flatpak\s+kill)\s+(?:-\S+\s+)*([^\s;&|]+)")
+
+
+_GO = re.compile(r"\s*(?:yes|yep|ok(?:ay)?|sure|go ahead|do it|restart|stop|approve|allow)\b", re.I)
 
 
 def rule_guard(payload: dict) -> dict | None:
@@ -825,9 +848,12 @@ def rule_guard(payload: dict) -> dict | None:
     hit = next((r for r in rules if any(w in r.lower() for w in words)), None)
     if not hit:
         return None
-    said = transcript.last_turn(payload.get("transcript_path", ""))["reply"].lower()
+    turn = transcript.last_turn(payload.get("transcript_path", ""))
+    said = turn["reply"].lower()
     if "your rule" in said or hit[:40].lower() in said:
         return None  # quoted in this turn; the user's go-ahead stands
+    if any(any(w in q.lower() for w in words) and _GO.match(a) for q, a in turn.get("answers", [])):
+        return None  # the user already said yes to this in the question tool this turn: one approval, never two
     verb = re.search(r"restart|stop|kill|disable|rm\b", m.group(0)) or re.search(r"\w+", m.group(0))
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",  # this text is what the user reads in the dialog
             "permissionDecisionReason": f'Your rule: "{hit}". Lantern is checking with you before this {verb.group(0)}.'}}
