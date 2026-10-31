@@ -201,3 +201,135 @@ class JustWorksTest(unittest.TestCase):
             self.assertTrue(hooks.HEALTH_ASK.search(q), q)
         for q in ("fix the worry function in app.py", "add a test for the parser"):
             self.assertFalse(hooks.HEALTH_ASK.search(q), q)
+
+
+class HardeningTest(unittest.TestCase):
+    def test_a_job_pointing_at_a_moved_lantern_is_repointed(self):
+        from lantern_core import discovery
+        shows = {"lantern-curate.service": "LoadState=loaded\nExecStart={ path=/opt/uv ; argv[]=/opt/uv run --no-project /gone/lantern.py job curate }\nExecMainStatus=2\n",
+                 "lantern-doctor.service": "LoadState=not-found\n", "lantern-watch.service": "LoadState=not-found\n"}
+        applied = []
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(discovery, "_which", return_value="/usr/bin/systemctl"), \
+                mock.patch.object(discovery, "_run", side_effect=lambda cmd: shows[cmd[-1]] if cmd[:3] == ["systemctl", "--user", "show"] else ""), \
+                mock.patch.object(schedule, "apply", side_effect=lambda p: applied.append(p)), mock.patch.object(schedule, "_uv", return_value="/opt/uv"), \
+                mock.patch.object(schedule.sys, "platform", "linux"), mock.patch.object(schedule, "linux_scheduler", return_value="systemd"):
+            found = schedule.real_own_jobs(Path(d) / "lantern.py")
+        self.assertEqual(len(applied), 1)
+        self.assertIn("no longer there; it now runs this one", found[0][1])
+
+    def test_odd_input_never_crashes_a_hook(self):
+        from lantern_core import memory
+        odd = ["", "null", "[]", '"text"', "42", "{not json", json.dumps({"prompt": None}), json.dumps({"prompt": 5, "session_id": []}),
+               json.dumps({"prompt": "x" * 200000, "session_id": "s"}), json.dumps({"prompt": "\udcff\x00‮ never restart plex", "session_id": "s"}),
+               json.dumps({"transcript_path": "/nonexistent/t.jsonl", "session_id": "s"}), json.dumps({"tool_name": "Bash", "tool_input": None}),
+               json.dumps({"tool_name": "Bash", "tool_input": {"command": None}}), json.dumps({"tool_name": "Bash", "tool_input": {"command": 5}}), json.dumps({"tool_name": 5}), json.dumps({"cwd": 5, "source": None})]
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.object(hooks.semantic, "search", return_value=None), mock.patch.object(hooks.resources, "can_spawn", return_value=False):
+            garbage = Path(d) / "garbage.jsonl"
+            garbage.write_bytes(b"\x00\xff{\n[1,2]\n{\"type\": 5}\n" + json.dumps({"type": "user", "message": {"content": 7}}).encode() + b"\n")
+            odd.append(json.dumps({"transcript_path": str(garbage), "session_id": "s", "prompt": "hi there friend"}))
+            for name in ("user-prompt-submit", "stop", "stop-nudge", "subagent-stop", "signal", "pre-tool-use"):
+                for raw in odd:
+                    out = io.StringIO()
+                    self.assertEqual(hooks.run(name, io.StringIO(raw), out), 0, (name, raw[:40]))
+                    if out.getvalue():
+                        json.loads(out.getvalue())  # whatever it says is valid JSON
+            log = Path(d) / "errors.jsonl"
+            crashes = [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
+            self.assertEqual([c["hook"] + ": " + c["error"] for c in crashes], [])  # odd input is handled, not crashed on
+
+    def test_a_hook_that_runs_long_stops_itself_and_says_why(self):
+        if not hasattr(hooks.signal, "SIGALRM"):
+            self.skipTest("no alarm signal on this OS")
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}), \
+                mock.patch.dict(hooks.BUDGET, {"stop": 1}), mock.patch.dict(hooks.HANDLERS, {"stop": lambda p: time.sleep(5)}):
+            t0 = time.monotonic()
+            hooks.run("stop", io.StringIO("{}"), io.StringIO())
+            self.assertLess(time.monotonic() - t0, 3)
+            self.assertIn("TimeoutError", (Path(d) / "errors.jsonl").read_text())
+
+    def test_a_damaged_memory_file_heals_from_its_copy(self):
+        from lantern_core import memory
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            memory.add(db, "rule", "said:s", "Never restart Plex without asking.")
+            db.close()
+            self.assertIn("memory copied for safety", memory.backup())
+            db = memory.connect()
+            memory.add(db, "fact", "x", "learned after the copy")
+            db.close()
+            (Path(d) / "memory.db-wal").unlink(missing_ok=True)
+            (Path(d) / "memory.db").write_bytes(b"this is not a database" * 100)
+            db = memory.connect()
+            self.assertEqual([t for (t,) in db.execute("SELECT text FROM items WHERE kind='rule'")], ["Never restart Plex without asking."])
+            db.close()
+            self.assertTrue(list(Path(d).glob("memory.db.damaged-*")))  # set aside, never deleted
+            ctx = hooks.session_start({"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("memory file was damaged and has been restored from its own copy", ctx)
+            ctx = hooks.session_start({"session_id": "s3"})["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("was damaged", ctx)  # said once
+
+    def test_a_damaged_file_with_no_copy_starts_fresh_and_says_so(self):
+        from lantern_core import memory
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            (Path(d) / "memory.db").write_bytes(b"\x00garbage" * 500)
+            memory.connect().close()
+            self.assertIn("started fresh", hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"])
+
+    def test_a_locked_memory_is_not_mistaken_for_damage(self):
+        from lantern_core import memory
+        import sqlite3
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            memory.connect().close()
+            with mock.patch.object(memory, "_open", side_effect=sqlite3.OperationalError("database is locked")):
+                with self.assertRaises(sqlite3.OperationalError):
+                    memory.connect()
+            self.assertFalse(list(Path(d).glob("memory.db.damaged-*")))
+
+    def test_an_old_data_folder_opens_and_upgrades(self):
+        from lantern_core import memory, status
+        import sqlite3
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            old = sqlite3.connect(Path(d) / "memory.db")  # a 0.1 database: items only, no vec column, no ledger, uses or stage
+            old.executescript("CREATE TABLE items (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, source TEXT NOT NULL, text TEXT NOT NULL, "
+                              "created REAL NOT NULL, status TEXT NOT NULL DEFAULT 'active');"
+                              "INSERT INTO items(kind, source, text, created) VALUES ('rule', 'said:s', 'Keep replies short.', 1.0);")
+            old.commit()
+            old.close()
+            (Path(d) / "settings.json").write_text(json.dumps({"depth": 2, "expertise": "general"}))  # a key 0.4 retired
+            ctx = hooks.session_start({"session_id": "s"})["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("- Keep replies short.", ctx)
+            self.assertTrue(status.line().startswith("Lantern:"))
+            hooks.user_prompt_submit({"prompt": "keep replies short and plain please", "session_id": "s"})
+            db = memory.connect()
+            self.assertIn("vec", {r[1] for r in db.execute("PRAGMA table_info(items)")})
+            db.close()
+
+    def test_two_sessions_writing_at_once_lose_nothing(self):
+        import subprocess as sp
+        with tempfile.TemporaryDirectory() as d:
+            script = ("import sys; sys.path.insert(0, %r)\n"
+                      "from lantern_core import memory, discovery\n"
+                      "n = sys.argv[1]\n"
+                      "for i in range(40):\n"
+                      "    db = memory.connect(); memory.add(db, 'turn', 's' + n, f'{n}-{i}'); db.close()\n"
+                      "    discovery.update_settings(**{'k' + n: i})\n") % str(Path(__file__).resolve().parents[1])
+            env = {**os.environ, "CLAUDE_PLUGIN_DATA": d}
+            procs = [sp.Popen([sys.executable, "-c", script, str(n)], env=env) for n in range(4)]
+            self.assertEqual([p.wait(timeout=120) for p in procs], [0, 0, 0, 0])
+            with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+                from lantern_core import discovery, memory
+                db = memory.connect()
+                self.assertEqual(db.execute("SELECT count(*) FROM items WHERE kind='turn'").fetchone()[0], 160)
+                db.close()
+                self.assertEqual({k: v for k, v in discovery.settings().items() if k.startswith("k")}, {"k0": 39, "k1": 39, "k2": 39, "k3": 39})
+
+    def test_a_full_disk_is_said_not_swallowed(self):
+        from lantern_core import status
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            with mock.patch.object(hooks, "_disk_full", return_value=True):
+                self.assertIn("disk is full", status.line())
+                with mock.patch.object(hooks, "_log", side_effect=OSError("No space left on device")):
+                    out = hooks._crashed("stop", OSError("No space left on device"))
+                self.assertIn("disk is full", out["systemMessage"])

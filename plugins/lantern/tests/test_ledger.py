@@ -641,7 +641,7 @@ class StatusTest(unittest.TestCase):
             db = memory.connect()
             stage.publish(db, "doctor/x", "doctor", "memory capture stopped", score=8)
             db.close()
-            self.assertIn("needs you: memory capture stopped", status.line())
+            self.assertIn("needs you: something in Lantern itself needs a look", status.line())
 
 
 class OnboardingTest(unittest.TestCase):

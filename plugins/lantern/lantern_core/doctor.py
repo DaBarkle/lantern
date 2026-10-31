@@ -196,7 +196,11 @@ def check_hook_smoke():
     return OK, "every hook runs clean on a returning session"
 
 
-CHECKS = {"data-dir": check_data_dir, "hook-smoke": check_hook_smoke, "own-jobs": check_own_jobs, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
+def check_backup():
+    return OK, memory.backup()
+
+
+CHECKS = {"data-dir": check_data_dir, "backup": check_backup, "hook-smoke": check_hook_smoke, "own-jobs": check_own_jobs, "status-line": check_status_line, "semantic": check_semantic, "memory-fresh": check_memory_fresh,
           "recall-rate": check_recall_rate, "shield": check_shield, "hook-latency": check_hook_latency, "hook-errors": check_hook_errors,
           "resources": check_resources, "packs": check_packs}
 

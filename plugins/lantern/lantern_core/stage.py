@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS stage_seen (session TEXT PRIMARY KEY, digest TEXT NOT
 
 
 def _ready(db: sqlite3.Connection) -> sqlite3.Connection:
-    db.executescript(SCHEMA)
+    if not {"stage", "stage_seen"} <= {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+        db.executescript(SCHEMA)  # once per file; every open taking the write lock made concurrent sessions collide
     return db
 
 

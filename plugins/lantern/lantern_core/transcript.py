@@ -34,6 +34,8 @@ def _entries(path: str | Path, sidechain: bool = False) -> list[dict]:
             e = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(e, dict) or not isinstance(e.get("message", {}), dict):
+            continue  # not an entry Claude Code writes
         if e.get("type") in ("user", "assistant") and (sidechain or not e.get("isSidechain")):
             out.append(e)  # an agent's own transcript is all sidechain: read it when asked to
     return out

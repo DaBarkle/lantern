@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1 (2026-10-31)
+
+Hardening: every failure that used to be silent now heals itself or is said, in plain words.
+
+- State files are written whole or not at all. A session reading settings mid-write used to see an empty file, and the next save wiped what Lantern knew about the machine; an unreadable phone channel used to mint a new topic.
+- A damaged memory file is set aside, never deleted, and the doctor's daily checked copy takes its place; the next session says so once.
+- Sessions opening memory at the same moment no longer collide ("database is locked"); the schema is set once per file.
+- Every hook stops itself a second before Claude Code's own limit and logs why, instead of being killed without a trace.
+- A full disk is said in the status line and in the session, never swallowed.
+- Odd hook input (a list, null, numbers where text belongs, a garbage transcript) is handled, not crashed on; the hooks are fuzzed in the test suite.
+- A scheduled job pointing at a copy of Lantern that has moved repoints itself.
+- No internal keys, shell commands or unit names in front of a non-technical reader: common system jobs are named in everyday words.
+- Databases and settings from older versions open and upgrade in place (tested from a 0.1 database).
+
 ## 0.5.0 (2026-10-31)
 
 Lantern learns from ordinary use and speaks plainly to someone who is not technical. Nothing to run, no simulations, no
