@@ -247,15 +247,21 @@ class LedgerTest(unittest.TestCase):
 
     def test_jargon_is_sent_back_for_a_plain_reader(self):
         p = Path(self.tmp.name) / "t.jsonl"
+        nudge = lambda level: (mock.patch.object(hooks.register, "level", return_value=level),
+                               mock.patch.object(hooks.discovery, "settings", return_value={}))
+        def run(level):
+            a, b = nudge(level)
+            with a, b:
+                return self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
         write(p, [user("is my computer ok?"), assistant("Kase failed: `systemctl --user reset-failed app-io.github.dabarkle.Kase@autostart.service` clears it (status=137/n/a).")])
-        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "general"}):
-            out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
-        self.assertIn("plain words", out["reason"])
-        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "expert"}):
-            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # an expert asked for exactly this
-        write(p, [user("is my computer ok?"), assistant("All fine. One app, Kase, stopped during an update and will start again next time you log in.")])
-        with mock.patch.object(hooks.discovery, "settings", return_value={"expertise": "general"}):
-            self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
+        self.assertIn("not technical", run("plain")["reason"])  # the reader's register, as register.py learns it
+        self.assertIsNone(run("expert"))  # an expert asked for exactly this
+        for jargon in ("Run the disk check from Windows when your parents aren't watching.", "It logged the same file-table error 7 times.",
+                       "The plex logs are in /var/lib/plex/Logs."):
+            write(p, [user("is my computer ok?"), assistant("Mostly fine. " + jargon)])
+            self.assertIn("not technical", run("plain")["reason"], jargon)
+        write(p, [user("is my computer ok?"), assistant("All fine. One app, Kase, stopped during an update and will start again next time you log in.\n\nDetails: app-io.github.dabarkle.Kase@autostart.service exit 137.")])
+        self.assertIsNone(run("plain"))  # plain, with the allowed details line at the end
 
     def test_only_a_pending_purpose_reasks_the_profile(self):
         with mock.patch.object(hooks.insights, "run", return_value=[]), mock.patch.object(hooks.discovery, "settings_path", return_value=Path(self.tmp.name) / "settings.json"):
@@ -270,7 +276,7 @@ class LedgerTest(unittest.TestCase):
         with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["lantern-sim-fail.service", "simrepo"], "at": time.time()}}):
             out = self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)})
             self.assertIn("not named yet: lantern-sim-fail.service", out["reason"])
-            write(p, [user("what changed?"), assistant("lantern-sim-fail.service is resolved and simrepo is new.")])
+            write(p, [user("what changed?"), assistant("The lantern-sim-fail service is resolved and simrepo is new.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))
             write(p, [user("hi"), assistant("Hello."), user("add a timer"), assistant("Done.")])
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # a later unrelated turn is not held to it
@@ -306,10 +312,10 @@ class LedgerTest(unittest.TestCase):
         p = Path(self.tmp.name) / "t.jsonl"
         write(p, [user("what changed since yesterday?"), assistant("Three new problems: simrepo has uncommitted work."),
                   user("Stop hook feedback: Not named yet: lantern-sim-fail.service. Add one line per item."),
-                  assistant("lantern-sim-fail.service failed overnight with exit status 1.")])
+                  assistant("The lantern-sim-fail service failed overnight; it stopped on its first step.")])
         turn = hooks.transcript.last_turn(p)
         self.assertEqual(turn["user"], "what changed since yesterday?")
-        self.assertIn("simrepo", turn["reply"]); self.assertIn("lantern-sim-fail.service", turn["reply"])
+        self.assertIn("simrepo", turn["reply"]); self.assertIn("lantern-sim-fail service", turn["reply"])
         self.assertEqual(sum(1 for r, _ in hooks.transcript.messages(p) if r == "user"), 1)
         with mock.patch.object(hooks.discovery, "settings", return_value={"since_last": {"names": ["lantern-sim-fail.service", "simrepo"], "at": time.time()}}):
             self.assertIsNone(self.call("stop-nudge", {"session_id": "s1", "transcript_path": str(p)}))  # both named across the turn: no third pass
@@ -443,6 +449,23 @@ class LedgerTest(unittest.TestCase):
         db = memory.connect()
         self.assertIn("[fact, changed] Backups run at 04:00 nightly. (was: Backups run at 02:00 nightly.)", memory.learned_since(db, time.time() - 3600))
         db.close()
+
+    def test_a_returning_session_says_what_it_picked_up_about_the_user(self):
+        self.call("session-start", {"session_id": "s1"})
+        self.call("stop", {"session_id": "s1", "transcript_path": ""})
+        db = memory.connect()
+        memory.ledger_update(db, "s1", "", {"user": "hi", "reply": "hello"}, now=time.time() - 3600)
+        memory.add(db, "routine", "curate:r", "Check the nightly backup's last result and say when it ran.")
+        db.close()
+        ctx = self.call("session-start", {"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("[routine] Check the nightly backup", ctx)
+        self.assertIn("ONE plain sentence on what Lantern picked up about the user", ctx)
+        db = memory.connect()
+        db.execute("UPDATE items SET kind='fact' WHERE source='curate:r'")
+        db.commit()
+        db.close()
+        ctx = self.call("session-start", {"session_id": "s3"})["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("ONE plain sentence", ctx)  # a fact about the machine is not growth to announce
 
     def test_subagent_result_is_captured(self):
         p = Path(self.tmp.name) / "agent.jsonl"

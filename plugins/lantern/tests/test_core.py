@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -149,3 +150,54 @@ class OwnJobsTest(unittest.TestCase):
         self.assertIn("failed at Sat 2026-10-31 04:00:00 AEDT (exit 1; Error: no space left)", found[1][1])
         with mock.patch.object(discovery, "_which", return_value=None):
             self.assertEqual(schedule.real_own_jobs(entry), [])  # no systemctl here: nothing to check
+
+
+class JustWorksTest(unittest.TestCase):
+    def test_one_server_per_folder_whatever_the_path(self):
+        from lantern_core import semantic
+        with tempfile.TemporaryDirectory() as d:
+            real = Path(d) / "data"
+            real.mkdir()
+            link = Path(d) / "link"
+            link.symlink_to(real)
+            self.assertEqual(semantic.port_for(real), semantic.port_for(link))
+            semantic.write_token(real)
+            self.assertTrue((real / f"serve-{semantic.port_for(real)}.token").exists())  # a key per port: never overwritten by another server
+
+    def test_status_line_speaks_plainly_to_a_plain_reader(self):
+        from lantern_core import memory, register, stage, status
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            db = memory.connect()
+            stage.publish(db, "insight/failed-system/logrotate.service", "insight", "logrotate.service (a system unit) has failed", score=4)
+            db.close()
+            with mock.patch.object(register, "level", return_value="plain"):
+                self.assertIn("all well", status.line())  # a system chore they cannot act on
+                self.assertNotIn("things known", status.line())
+                db = memory.connect()
+                stage.publish(db, "insight/disk/1000", "insight", "the volume holding /home/x is 96% full (38 GB of 998 GB left; podman could free 51GB)", score=6)
+                db.close()
+                self.assertTrue(status.line().endswith("needs you: your drive is nearly full (38 GB left)"), status.line())
+            with mock.patch.object(register, "level", return_value="expert"):
+                self.assertIn("the volume holding /home/x", status.line())
+                self.assertIn("things known", status.line())
+
+    def test_errors_from_code_since_replaced_are_not_news(self):
+        from lantern_core import doctor
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            log = Path(d) / "errors.jsonl"
+            log.write_text(json.dumps({"ts": time.time() - 3600, "hook": "stop", "error": "NameError"}) + "\n")
+            code = Path(doctor.__file__).parent / "doctor.py"
+            os.utime(code)  # the code changed after that error
+            self.assertEqual(doctor.check_hook_errors()[0], doctor.OK)
+            log.write_text(log.read_text() + json.dumps({"ts": time.time() + 5, "hook": "stop", "error": "KeyError"}) + "\n")
+            self.assertEqual(doctor.check_hook_errors()[0], doctor.WARN)
+
+    def test_systemd_stamp(self):
+        self.assertEqual(time.localtime(schedule._stamp("Sat 2026-10-31 03:00:00 AEDT"))[:5], (2026, 10, 31, 3, 0))
+        self.assertEqual(schedule._stamp(""), 0.0)
+
+    def test_casual_health_questions_get_the_snapshot(self):
+        for q in ("is everything ok with my computer?", "what should i be worried about? keep it simple", "any problems?", "anything I should know?"):
+            self.assertTrue(hooks.HEALTH_ASK.search(q), q)
+        for q in ("fix the worry function in app.py", "add a test for the parser"):
+            self.assertFalse(hooks.HEALTH_ASK.search(q), q)

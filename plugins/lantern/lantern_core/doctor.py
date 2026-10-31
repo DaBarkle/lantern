@@ -4,6 +4,7 @@ A failing check publishes its finding to Stage; a passing check resolves it; a c
 old finding dropped. So an alert lives exactly as long as its problem.
 """
 import json
+from pathlib import Path
 import os
 import time
 
@@ -86,9 +87,10 @@ def check_hook_errors():
     except OSError:
         return OK, "no hook errors recorded"
     recent = [json.loads(l) for l in lines if l.strip()]
-    recent = [r for r in recent if time.time() - r.get("ts", 0) < 86400]
+    code_at = max(f.stat().st_mtime for f in Path(__file__).parent.glob("*.py"))  # an error from code since replaced is fixed, not news
+    recent = [r for r in recent if time.time() - r.get("ts", 0) < 86400 and r.get("ts", 0) > code_at]
     if not recent:
-        return OK, "no hook errors in the last day"
+        return OK, "no hook errors in the last day since Lantern was last updated"
     last = recent[-1]
     return WARN, f"{len(recent)} hook error(s) in the last day, last in {last.get('hook')}: {last.get('error', '')[:160]}"
 
@@ -203,7 +205,7 @@ def run_all() -> list[tuple[str, str, str]]:
     results = []
     checks = dict(CHECKS)
     for cap_id, cap in discovery.settings().get("capabilities", {}).items():
-        if cap.get("check"):  # each accepted capability is checked for what it is for: being up
+        if cap.get("check") and not cap_id.startswith(("repo:", "project:")):  # a project folder is not a service: moved is not down
             checks[f"cap:{cap_id}"] = lambda c=cap: ((OK, f"{c['name']} is up") if discovery.healthy(c["check"])
                                                     else (WARN, f"{c['name']} is not responding"))
     for name, check in checks.items():

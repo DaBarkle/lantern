@@ -197,8 +197,13 @@ def session_start(payload: dict) -> dict | None:
         moved = ""
         if payload.get("source") not in ("compact", "resume"):
             insights.run(db)  # findings are re-checked at every session start, so a recommendation is never stale
-            for key, msg, score in schedule.own_jobs(entry):  # a failed nightly job of Lantern's own is a finding like any other
+            own = schedule.own_jobs(entry)
+            for key, msg, score in own:  # a failed nightly job of Lantern's own is a finding like any other
                 stage.publish(db, key, "insight", msg, score=score, days=1)
+            failed = [k.rsplit("/", 1)[1] for k, m, _ in own if " failed at " in m]
+            rerun = [j for j in failed if j in jobs.DUE and j not in started
+                     and time.time() - jobs._state().get(f"{j}_started", 0) > jobs.LOCK_SECONDS]
+            started += jobs.start(rerun, entry)  # it heals now, in the background, not tomorrow night
             alerts.run(db, send=False)  # the user sees them here; the phone only hears what trips while they are away
             alerts.ensure_scheduled(entry)  # the hourly check installs itself once the phone can be reached
             discovery.refresh_frontiers()  # and what is beyond reach closes by itself once its key or sign-in is there
@@ -273,9 +278,15 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "Notes Lantern holds, newest first (one line each, dated; recall brings in detail when a prompt matches; "
                   "an older note may have been overtaken by events):"] + [f"- {i}" for i in index]
     if learned and not first:
-        lines += ["", "Learned since the user's last session (mention it briefly if the user asks what Lantern has picked up; a "
-                  "'changed' item replaces what Lantern held before: if a past reply told the user the old version, say it changed):"]
+        about_them = [l for l in learned if l.startswith(("[rule", "[profile", "[routine"))]
+        lines += ["", "Learned since the user's last session (a 'changed' item replaces what Lantern held before: if a past reply told "
+                  "the user the old version, say it changed):"]
         lines += [f"- {l}" for l in learned]
+        if about_them:  # growth they can see: what it learned about them, said once, in their words
+            lines += ["After the since-last lines, add ONE plain sentence on what Lantern picked up about the user since last time, "
+                      "from the rule, profile and routine items above (e.g. \"I've remembered that you like short answers, and I'll check "
+                      "the backup each morning without being asked.\"); never counts, kinds or the word 'curated'; skip it if the user's "
+                      "first message is urgent."]
     if own:
         lines += ["", "This session's working memory (from before the compaction):",
                   f"- Started with: {own[0][:400]}",
@@ -724,15 +735,25 @@ _PROSE_CHOICE = re.compile(r"(?:\bor\b[^.?\n]{3,120}\?\s*$)|(?:\b(?:which|either
 _ALLOW_NEXT = re.compile(r"\b(?:allow|approve)\b[^.\n]{0,40}\b(?:next time|when it comes up|the next time|if it comes up)\b|\bsince you declined\b[^.\n]{0,60}\b(?:I (?:won't|will not)|I'm not going to)\b", re.I)
 _OFFERED_READ = re.compile(r"\b(?:Should I|Shall I|Want me to|Do you want me to|Say the word and I'll) (?:run|check|read|look|inspect|verify|scan|list|pull)\b"
                            r"(?![^?\n]*\b(?:restart|stop|kill|delete|remove|prune|push|install|change|edit|write|enable|disable)\b)[^?\n]{0,140}\?", re.I)
-_JARGON = re.compile(r"`[^`\n]*(?:\s-{1,2}[A-Za-z]|\s/[a-z]\b|\$\w)[^`\n]*`|\bcode=exited\b|\bstatus=\d+/|\b\w+\[\d+\]: |\bexit (?:code|status) \d+\b")
+_JARGON = re.compile(r"`[^`\n]{3,}`|\bcode=exited\b|\bstatus=\d+/|\b\w+\[\d+\]: |\bexit (?:code|status)\b|\b[\w@.-]+\.(?:service|timer|socket)\b|"
+                     r"(?<![\w/])(?:~|/(?:home|var|etc|usr|run|dev|mnt|opt))/[\w./-]+|\b(?:journalctl|systemd|systemctl|daemon|inode|NTFS|swap ?file|"
+                     r"file-table|SMART (?:data|attributes|errors)|stderr|stdout|PID)\b|"
+                     r"\b(?:(?:from|in|on|boot into) Windows|(?:open|in) (?:a )?terminal|PowerShell|command prompt)\b")  # words and places a non-technical reader cannot use
 SNAPSHOT_FRESH_S = 2 * 3600
 HEALTH_ASK = re.compile(r"\b(?:everything|all|things|anything) (?:ok|okay|fine|good|alright|wrong|broken)\b|\bhow(?:'s| is) (?:my|the) "
                         r"(?:machine|computer|system|server|pc|box)\b|\b(?:machine|computer|system|server|pc) (?:ok|okay|fine|healthy|alright)\b"
-                        r"|\bhealth check\b|\bstatus of (?:my|the) (?:machine|computer|system|server)\b", re.I)
+                        r"|\bhealth check\b|\bstatus of (?:my|the) (?:machine|computer|system|server)\b"
+                        r"|\b(?:any|got any) (?:problems|issues|trouble)\b|\b(?:should|do) I (?:be )?worr(?:y|ied)\b|\bworried about\b"
+                        r"|\banything (?:I should|to) (?:know|worry)\b", re.I)  # how a non-technical user asks the same thing
 
 
 _WRITE_CMD = re.compile(r"(?:`[^`\n]*|^[^`\n]*)\b(?:systemctl|podman|docker|rpm-ostree|flatpak|brew|apt|dnf)\b[^`\n]*\b(?:restart|reboot|stop|start|enable|disable|"
                         r"install|remove|uninstall|update|upgrade|daemon-reload|kill|rm)\b", re.M | re.I)
+
+
+def _details_cut(reply: str) -> str:
+    """The reply without its trailing 'details:' line, which the plain register allows."""
+    return re.split(r"(?im)^\s*\**details\**\s*:", reply, maxsplit=1)[0]
 
 
 def hands_off(reply: str) -> bool:
@@ -775,7 +796,8 @@ def stop_nudge(payload: dict) -> dict | None:
     first_reply = sum(1 for r, _ in transcript.messages(payload.get("transcript_path", "")) if r == "user") <= 1
     if since.get("names") and time.time() - since.get("at", 0) < 12 * 3600 and (first_reply or _WHAT_CHANGED.search(turn["user"])):
         said = turn["reply"].lower()
-        missing = [n for n in since["names"] if n.lower() not in said]
+        stem = lambda n: re.sub(r"(?:@[^.]*)?\.(?:service|timer|socket)$", "", n).lower()  # "the lantern-sim-fail service" names it too
+        missing = [n for n in since["names"] if stem(n) not in said]
         if missing:
             asks.append("name every item the SINCE LAST SESSION block lists as new, resolved, changed or back again; not named yet: "
                         + ", ".join(missing[:8]) + " (one line each, with its state)")
@@ -783,9 +805,10 @@ def stop_nudge(payload: dict) -> dict | None:
         _log("nudge", {"hands_off": True, "user": turn["user"][:200]})
         asks.append(f"answer from Lantern's own watches, which ran at {time.strftime('%H:%M', time.localtime(at))}: " + snapshot_line(at)
                     + " Say in plain words what is failing, what is fine, what changed; no commands for the user to run, no 'I couldn't check'")
-    if discovery.settings().get("expertise") == "general" and (jargon := _JARGON.search(turn["reply"])):
-        asks.append("this reader asked for plain words and the reply carries jargon (\"" + jargon.group(0).strip()[:80] + "\"): add two or three "
-                    "plain sentences on what it means for them and what happens next; an exact detail may stay as one short 'details' line at the end")
+    if register.level() != "expert" and (jargon := _JARGON.search(_details_cut(turn["reply"]))):
+        asks.append("this reader is not technical and the reply carries words or places they cannot use (\"" + jargon.group(0).strip()[:80] + "\"): "
+                    "say in two or three plain sentences what it means for them and what happens next, with nothing they would have to do "
+                    "outside this chat; an exact detail may stay as one short 'details:' line at the very end")
     last = turn["reply"].rstrip().rsplit("\n\n", 1)[-1]
     if "[question tool]" not in last and (choice := _PROSE_CHOICE.search(last)):
         asks.append("the reply ends with a choice written as prose (\"" + choice.group(0).strip()[:120] + "\"): ask it with the AskUserQuestion "

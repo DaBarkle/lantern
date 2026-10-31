@@ -5,6 +5,7 @@ plan() only describes the change (files to write, commands to run); apply() make
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import discovery
@@ -115,6 +116,19 @@ def apply(p: dict) -> None:
 JOBS = {"curate": 3, "doctor": 4, "watch": None}  # job: hour (None = hourly), as `lantern schedule` plans them
 
 
+def _stamp(text: str) -> float:
+    """A systemd timestamp ("Sat 2026-10-31 03:00:00 AEDT") as unix seconds; 0 when it cannot be read."""
+    try:
+        return time.mktime(time.strptime(" ".join(text.split()[1:3]), "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _done(job: str) -> float:
+    from . import jobs
+    return jobs._state().get(f"{job}_done", 0.0)
+
+
 def own_jobs(entry: Path, repair: bool = True) -> list[tuple[str, str, float]]:
     """Did Lantern's own scheduled jobs last run cleanly? Findings for the Stage, so the since-last block reports a
     nightly curation that failed; systemd marks such a unit Result=success once the timer rearms, so the exit status
@@ -138,6 +152,8 @@ def own_jobs(entry: Path, repair: bool = True) -> list[tuple[str, str, float]]:
             except (OSError, subprocess.CalledProcessError):
                 pass
         status = show.get("ExecMainStatus", "0")
+        if status not in ("", "0") and _stamp(show.get("ExecMainExitTimestamp", "")) < _done(job):
+            continue  # it failed on the timer, then ran fine in a session: healed, nothing to report
         if status not in ("", "0"):
             log = [l for l in discovery._run(["journalctl", "--user", "-u", unit, "-n", "5", "--no-pager", "-o", "cat"]).splitlines() if l.strip()]
             why = next((l for l in reversed(log) if "Unable to locate" in l or "Error" in l or "error" in l), log[-1] if log else "no journal line")

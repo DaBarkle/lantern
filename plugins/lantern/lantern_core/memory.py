@@ -202,7 +202,7 @@ def rules_touching(db: sqlite3.Connection, prompt: str, limit: int = 2) -> list[
 def learned_since(db: sqlite3.Connection, since: float, limit: int = 6) -> list[str]:
     """Rules, facts, patterns and profile lines curated or stated since a time, newest first (not discovery cards)."""
     rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile','routine') AND status='active' "
-                      "AND created > ? AND source NOT LIKE 'discovery:%' ORDER BY created DESC LIMIT ?", (since, limit))
+                      "AND created > ? AND source NOT LIKE 'discovery:%' AND source != 'seeded' ORDER BY created DESC LIMIT ?", (since, limit))
     out = []
     for k, t in rows:
         if not t.strip():
