@@ -52,6 +52,14 @@ def names() -> dict[str, str]:
     return out
 
 
+# Common units in everyday words: a non-technical reader handed "logrotate" or "uupd" repeats them (nontech week, v0.5.0).
+EVERYDAY = [(r"logrotate", "the log tidy-up job"), (r"(?:uupd|rpm-ostreed|rpm-ostree|flatpak-system-update|flatpak-update|packagekit|"
+             r"unattended-upgrades|apt-daily|dnf-makecache|fwupd)", "the system updater"),
+            (r"(?:restic|borg|borgmatic|rsnapshot|timeshift|snapper|duplicity|kopia)", "the backup job"),
+            (r"app-(?:[\w-]+\.)*([\w-]+?)(?:@.*)?$", lambda m: f"the {m.group(1)} app"),
+            (r"(?:cups|cups-browsed)", "the printer service"), (r"(?:bluetooth)", "Bluetooth"), (r"(?:networkmanager|nm-)", "the network service")]
+
+
 def say(text: str) -> str:
     """Text the user sees without a model in between (the status line): unit names become plain, their own names used."""
     if level() == "expert":
@@ -62,6 +70,9 @@ def say(text: str) -> str:
         for cap, name in own.items():
             if cap.lower() in m.group(1).lower():
                 return name
+        for pat, plain in EVERYDAY:
+            if (hit := re.match(pat, m.group(1), re.I)):
+                return plain if isinstance(plain, str) else plain(hit)
         return f"the {m.group(1)} {'job' if m.group(2) == 'timer' else 'service'}"
     text = UNIT.sub(unit, text)
     for cap, name in own.items():  # a bare "Plex" too, but not the one inside "the plex thing" just placed

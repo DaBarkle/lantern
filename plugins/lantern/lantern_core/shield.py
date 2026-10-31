@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from .paths import ensure_data_dir, uv
+from .paths import ensure_data_dir, uv, write_atomic
 
 PATTERNS = [
     ("private key", re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")),
@@ -249,7 +249,7 @@ def cli(argv: list[str]) -> int:
         print(json.dumps({**st, "stored": len(st["stored"]), "linked": len(st["linked"])}, indent=1))
         return 0
     if argv[:1] == ["link"] and len(argv) == 3 and argv[2].partition("://")[0] in MANAGERS:
-        _links_file().write_text(json.dumps({**links(), argv[1]: argv[2]}))
+        write_atomic(_links_file(), json.dumps({**links(), argv[1]: argv[2]}))
         print(f"{argv[1]} will be read from {MANAGERS[argv[2].partition('://')[0]][1]} when a command needs it")
         return 0
     kr = _keyring()
@@ -264,14 +264,14 @@ def cli(argv: list[str]) -> int:
             print(f"lantern: this session has no keychain ({e}); the secret was not stored anywhere. Hand it over in a "
                   "session on your own machine.", file=sys.stderr)
             return 1
-        _names_file().write_text(json.dumps(sorted(set(names()) | {argv[1]})))
+        write_atomic(_names_file(), json.dumps(sorted(set(names()) | {argv[1]})))
         return 0
     if argv[:1] == ["delete"] and len(argv) == 2:
         try:
             kr.delete_password(SERVICE, argv[1])
         except kr.errors.KeyringError:
             pass
-        _names_file().write_text(json.dumps([n for n in names() if n != argv[1]]))
+        write_atomic(_names_file(), json.dumps([n for n in names() if n != argv[1]]))
         return 0
     if argv[:1] == ["run"] and "--" in argv:
         split = argv.index("--")

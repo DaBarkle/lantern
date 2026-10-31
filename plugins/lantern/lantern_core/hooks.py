@@ -4,6 +4,8 @@ import json
 import math
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -184,6 +186,16 @@ def session_start(payload: dict) -> dict | None:
         capture_last_session(payload.get("cwd") or "", payload.get("session_id", "?"))
     packs.sync()  # active packs' skills stay current with the plugin, and the skills folder exists for the session's watcher
     lines = [f"Lantern {__version__} is active. Its data folder is {d}."]
+    healed = d / "memory.healed"
+    if healed.exists():  # said once, then forgotten
+        try:
+            h = json.loads(healed.read_text())
+            lines.append("Lantern's memory file was damaged and has been " + (f"restored from its own copy of {h['restored']}" if h.get("restored")
+                         else "started fresh (there was no earlier copy)") + f"; the damaged file is kept beside it as {h['kept']}. Tell the user "
+                         "in one plain line at the start of your reply; anything learned after that copy may need saying again.")
+        except (OSError, ValueError, KeyError):
+            pass
+        healed.unlink(missing_ok=True)
     if "discover" in started:  # background work is visible: the user never wonders what is running
         lines.append(f"Scouting now: Lantern is looking over this machine again in the background (depth {discovery.settings().get('depth', 2)}, "
                      "read-only). Say so in one short line in your reply; new finds appear on Stage at the next session start.")
@@ -314,12 +326,12 @@ def session_start(payload: dict) -> dict | None:
         discovery.update_settings(since_last={**(discovery.settings().get("since_last") or {}), "bigfiles": bigfiles})
     if found_new:
         tail_block += [found_new]
-    tail_block += [open_block]
+    tail_block += [register.say(open_block)]
     if not first:
         at = discovery.settings().get("insights_at")
         tail_block += [f"You already know the state of this machine: Lantern's watches (failed services, disk, unpushed work, known "
                   f"services, backup jobs, new scheduled jobs) ran at {time.strftime('%H:%M', time.localtime(at)) if at else 'this session start'}"
-                  f" and found: {watches}. When the user asks whether things are OK, that is the answer: say it in plain words first "
+                  f" and found: {register.say(watches)}. When the user asks whether things are OK, that is the answer: say it in plain words first "
                   "(what is failing, what is fine), then look deeper only if useful. A declined or failed command never leaves the "
                   "user without an answer; you have this one. Duties beyond these watches: a read-only one is on from the moment it is named; "
                   "only a duty that changes the machine stays a proposal until the user says yes. Say which is which."]
@@ -773,7 +785,7 @@ def snapshot_line(at: float) -> str:
         open_block = insights.open_block(db)
     finally:
         db.close()
-    return (f"Lantern's watches ran at {time.strftime('%H:%M', time.localtime(at))} and found: {watches}. {open_block}")
+    return register.say(f"Lantern's watches ran at {time.strftime('%H:%M', time.localtime(at))} and found: {watches}. {open_block}")  # plain names for a plain reader
 
 
 def stop_nudge(payload: dict) -> dict | None:
@@ -938,13 +950,33 @@ def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
         payload = json.loads(stdin.read() or "{}")
     except json.JSONDecodeError:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {}  # a list, a string or null on stdin is no event Lantern knows
+    for k in ("prompt", "session_id", "transcript_path", "agent_transcript_path", "cwd", "source", "tool_name"):
+        if k in payload and not isinstance(payload[k], str):
+            payload[k] = "" if payload[k] is None else str(payload[k]) if isinstance(payload[k], (int, float)) else ""
+    if not isinstance(payload.get("tool_input", {}), dict):
+        payload["tool_input"] = {}
+    ti = payload.get("tool_input") or {}
+    for k in ("command", "file_path", "content"):
+        if k in ti and not isinstance(ti[k], str):
+            ti[k] = ""  # no real tool call carries these as anything but text
     t0 = time.monotonic()
+    budget = BUDGET.get(name)
+    if budget and hasattr(signal, "SIGALRM"):
+        def late(*_):
+            raise TimeoutError(f"took longer than {budget} s; stopped before Claude Code's own limit so the reason is logged")
+        signal.signal(signal.SIGALRM, late)
+        signal.alarm(budget)
     try:
         reply = handler(payload)
     except Exception as e:  # a platform Lantern has not met must never block a prompt: log it, say so once, carry on
         if name == "pre-tool-use":
             raise  # the shield fails closed on its own terms; a crash there must stay visible
         reply = _crashed(name, e)
+    finally:
+        if budget and hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
     text = json.dumps(reply) if reply else ""
     if name != "pre-tool-use":  # every prompt-path hook reports how long it took and how much it said; the doctor watches the trend
         _log("hooks", {"hook": name, "ms": round((time.monotonic() - t0) * 1000), "bytes": len(text)})
@@ -954,6 +986,18 @@ def run(name: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
 
 
 ERROR_NOTE_EVERY = 3600
+# One second under each hook's timeout in hooks.json: a hook Claude Code kills leaves no trace; one that stops itself logs why.
+BUDGET = {"session-start": 28, "user-prompt-submit": 9, "pre-tool-use": 9, "stop-nudge": 9, "signal": 4, "stop": 50, "subagent-stop": 50}
+
+
+def _disk_full() -> bool:
+    try:
+        return shutil.disk_usage(ensure_data_dir()).free < DISK_FULL_BYTES
+    except OSError:
+        return False
+
+
+DISK_FULL_BYTES = 200 * 1024 * 1024  # under this SQLite and every state write start failing
 
 
 def _crashed(name: str, e: Exception) -> dict | None:
@@ -964,8 +1008,11 @@ def _crashed(name: str, e: Exception) -> dict | None:
         fresh = time.time() - marker.stat().st_mtime < ERROR_NOTE_EVERY if marker.exists() else False
         marker.touch()
     except OSError:
-        return None
+        fresh = False  # nothing can be written (a full disk, a read-only folder): say so rather than fail in silence
     if fresh:
         return None
+    if _disk_full():
+        return {"systemMessage": "Lantern can't save anything right now because the disk is full. The session carries on; "
+                                 "what you say now may not be remembered until space is freed."}
     return {"systemMessage": f"Lantern's {name} step hit a problem on this machine ({type(e).__name__}: {str(e)[:120]}). "
                              f"The session carries on without it; the doctor has the details."}

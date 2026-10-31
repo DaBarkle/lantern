@@ -2,6 +2,7 @@
 
 plan() only describes the change (files to write, commands to run); apply() makes it.
 """
+import re
 import shutil
 import subprocess
 import sys
@@ -143,11 +144,14 @@ def own_jobs(entry: Path, repair: bool = True) -> list[tuple[str, str, float]]:
         if show.get("LoadState", "not-found") == "not-found" or not show.get("ExecStart"):
             continue
         bare = "path=uv ;" in show["ExecStart"] or "argv[]=uv " in show["ExecStart"]
-        if bare and repair:
+        named = re.search(r"(\S+lantern\.py)\b", show["ExecStart"])
+        moved = bool(named) and not Path(named.group(1)).exists()  # a plugin update or a moved checkout left the unit pointing at nothing
+        if (bare or moved) and repair:
             try:
                 apply(plan(job, hour, entry, data=data_dir()))
-                out.append((f"insight/own-job/{job}", f"Lantern's own {job} job pointed at a bare `uv`, which a timer cannot find; "
-                            f"it now names {_uv()} and runs again from its next time", 2))
+                out.append((f"insight/own-job/{job}", (f"Lantern's own {job} job pointed at a bare `uv`, which a timer cannot find; it now names {_uv()}"
+                             if bare else f"Lantern's own {job} job pointed at a copy of Lantern that is no longer there; it now runs this one")
+                            + " and runs again from its next time", 2))
                 continue
             except (OSError, subprocess.CalledProcessError):
                 pass

@@ -1,6 +1,7 @@
 """Memory store: one SQLite file with full-text search, ranked by relevance and gently by age."""
 import json
 import math
+import os
 import re
 import sqlite3
 import time
@@ -46,13 +47,78 @@ END;
 """
 
 
+SCHEMA_NAMES = {"items", "ledger", "uses", "items_fts", "items_ai", "items_ad"}
+DAMAGED = ("malformed", "not a database", "file is encrypted", "disk image")
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
-    db = sqlite3.connect(path or ensure_data_dir() / "memory.db", timeout=5)
-    db.execute("PRAGMA journal_mode=WAL")  # several sessions write at once
-    db.executescript(SCHEMA)
+    path = path or ensure_data_dir() / "memory.db"
+    try:
+        db = _open(path)
+    except sqlite3.DatabaseError as e:
+        if not any(w in str(e).lower() for w in DAMAGED):
+            raise  # locked or busy: the caller's own error handling says so; the file itself is fine
+        heal(path, str(e))
+        db = _open(path)
+    return db
+
+
+def _open(path: Path) -> sqlite3.Connection:
+    db = sqlite3.connect(path, timeout=5)
+    # WAL and the schema are set once per file. Re-running them on every open took the write lock each time, and four
+    # sessions opening at once got "database is locked" (a lock taken while switching modes skips the busy timeout).
+    for attempt in range(50):  # a brand-new file opened by several processes at once: one wins the switch, the rest wait
+        try:
+            if db.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                db.execute("PRAGMA journal_mode=WAL")  # several sessions write at once
+            if not SCHEMA_NAMES <= {r[0] for r in db.execute("SELECT name FROM sqlite_master")}:
+                db.executescript(SCHEMA)
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or attempt == 49:
+                raise
+            time.sleep(0.1)
     if "vec" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
         db.execute("ALTER TABLE items ADD COLUMN vec BLOB")  # databases made before semantic search
     return db
+
+
+def heal(path: Path, why: str) -> None:
+    """A damaged memory file is set aside (never deleted) and the last good copy the doctor made takes its place; with no
+    copy, memory starts empty. Either way the next session says so once, in plain words."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for suffix in ("", "-wal", "-shm"):
+        f = Path(f"{path}{suffix}")
+        if f.exists():
+            f.replace(f.with_name(f"{f.name}.damaged-{stamp}"))
+    copy = path.with_name(path.name + ".bak")
+    restored = ""
+    if copy.exists():
+        import shutil
+        shutil.copyfile(copy, path)
+        restored = time.strftime("%Y-%m-%d %H:%M", time.localtime(copy.stat().st_mtime))
+    from .paths import write_atomic
+    write_atomic(path.with_name("memory.healed"), json.dumps({"at": time.time(), "why": why[:200], "restored": restored,
+                                                              "kept": f"{path.name}.damaged-{stamp}"}))
+
+
+def backup(path: Path | None = None) -> str:
+    """A daily copy of memory, made only from a file that passes its own check, so heal() has something good to restore."""
+    path = path or ensure_data_dir() / "memory.db"
+    db = connect(path)
+    try:
+        if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            return "memory did not pass its own check; yesterday's copy is kept"
+        tmp = path.with_name(path.name + ".bak.tmp")
+        out = sqlite3.connect(tmp)
+        try:
+            db.backup(out)
+        finally:
+            out.close()
+        os.replace(tmp, path.with_name(path.name + ".bak"))
+    finally:
+        db.close()
+    return f"memory copied for safety ({path.with_name(path.name + '.bak').stat().st_size / 1e6:.0f} MB)"
 
 
 def add(db: sqlite3.Connection, kind: str, source: str, text: str, created: float | None = None) -> int:

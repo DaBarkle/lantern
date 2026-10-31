@@ -151,7 +151,7 @@ class SshKeyTest(unittest.TestCase):
         with mock.patch.object(sshkey.subprocess, "run", side_effect=self.fake_run):
             code, msg = sshkey.grant("nyx", ask=lambda q: self.fail("asked a phone that is not listening"))
         self.assertEqual((code, self.calls), (2, []))
-        self.assertIn("aren't set up yet", msg)
+        self.assertIn("not linked yet", msg)
 
     def test_one_approval_then_key_install_and_proof(self):
         approvals.cli(["setup"])

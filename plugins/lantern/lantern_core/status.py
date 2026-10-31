@@ -35,6 +35,8 @@ def plain_finding(e: dict) -> str:
         return f"unsaved work in {msg.split(' (')[0]}"
     if kind == "backup":
         return "a backup did not run" if "MISSED" in msg else "the last backup failed"
+    if e["key"].startswith("doctor/"):
+        return "something in Lantern itself needs a look; ask me about it"
     if kind == "own-job":
         return "Lantern's nightly learning missed a run; it is retrying by itself"
     return register.say(msg)
@@ -67,7 +69,10 @@ def line(now: float | None = None) -> str:
         parts.append(f"learned {learned} today")
     if found:
         parts.append(f"found {found} new on this machine")
-    if findings:
+    from .hooks import _disk_full
+    if _disk_full():
+        parts.append("needs you: the disk is full, so Lantern can't save anything new")
+    elif findings:
         parts.append("needs you: " + (plain_finding(findings[0]) if plain else findings[0]["message"])[:80])
     else:
         parts.append("all well")
