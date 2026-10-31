@@ -234,6 +234,33 @@ def pending() -> str | None:
         return None
 
 
+def prompt_dialog(name: str) -> str | None:
+    """Ask for NAME in a password box on the user's own screen, so the value never goes through the chat (where Claude
+    Code keeps a blocked prompt in the session file and shows it back as "Original prompt"). None when there is no
+    screen to ask on (a remote session) or the user closed the box."""
+    what = name.replace("_", " ").lower()
+    text = f"Lantern needs your {what}. It goes straight into this computer's keychain; Claude never sees it."
+    if sys.platform == "darwin":
+        cmd = ["osascript", "-e", f'text returned of (display dialog "{text}" default answer "" with hidden answer with title "Lantern")']
+    elif sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-Command", "$c = Get-Credential -UserName lantern -Message '" + text.replace("'", "") + "'; "
+               "if ($c) { $c.GetNetworkCredential().Password }"]
+    elif not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+    elif shutil.which("kdialog"):
+        cmd = ["kdialog", "--title", "Lantern", "--password", text]
+    elif shutil.which("zenity"):
+        cmd = ["zenity", "--password", "--title", f"Lantern: {what}"]
+    else:
+        return None
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = r.stdout.strip() if r.returncode == 0 else ""
+    return value or None
+
+
 def paste(prompt: str) -> tuple[str | None, bool]:
     """A prompt of the form `secret NAME: value` is a hand-over: store the value in the keychain and return (NAME, stored),
     so the hook can stop the prompt before it reaches the model whether or not this session has a keychain. The value
@@ -262,7 +289,7 @@ def store(name: str, value: str) -> bool:
 
 
 def cli(argv: list[str]) -> int:
-    """lantern secret ask NAME | set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME | link NAME <manager reference> | status
+    """lantern secret prompt NAME | ask NAME | set NAME | run NAME[,NAME...] -- CMD... | list | delete NAME | link NAME <manager reference> | status
     References: op://vault/item/field, bw://item[/field], pass://path, keepass:///db.kdbx/entry"""
     if argv[:1] == ["list"]:
         print("\n".join(sorted(set(names()) | set(links()))))
@@ -274,6 +301,14 @@ def cli(argv: list[str]) -> int:
         st = manager_status()
         print(json.dumps({**st, "stored": len(st["stored"]), "linked": len(st["linked"])}, indent=1))
         return 0
+    if argv[:1] == ["prompt"] and len(argv) == 2 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", argv[1]):
+        value = prompt_dialog(argv[1])
+        if value is None:
+            print(f"no password box could be shown here (a remote session, or it was closed); {ask(argv[1])}")
+            return 3
+        ok = store(argv[1], value)
+        print(f"stored {argv[1]} in the keychain" if ok else f"this machine has no keychain; {argv[1]} was not stored anywhere")
+        return 0 if ok else 1
     if argv[:1] == ["op-vault"] and len(argv) == 2:
         write_atomic(ensure_data_dir() / "op-vault.json", json.dumps({"vault": argv[1]}))
         print(f"Lantern reads 1Password items from the {argv[1]} vault only")

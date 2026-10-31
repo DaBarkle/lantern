@@ -254,3 +254,31 @@ class OnePasswordServiceAccountTest(unittest.TestCase):
                 self.assertEqual(seen, {})  # never even asked
             with mock.patch.object(shield, "names", return_value=["OP_SERVICE_ACCOUNT_TOKEN"]):
                 self.assertEqual(shield._ready("op", {"OP_SERVICE_ACCOUNT_TOKEN"})[0], True)
+
+
+class SecretPromptTest(unittest.TestCase):
+    def test_a_box_on_the_screen_stores_the_value_and_says_only_its_name(self):
+        from lantern_core import shield
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_DATA": d}):
+            stored = {}
+            with mock.patch.object(shield, "prompt_dialog", return_value="hunter2-value"), \
+                    mock.patch.object(shield, "store", side_effect=lambda n, v: stored.update({n: v}) or True):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(shield.cli(["prompt", "PLEX_TOKEN"]), 0)
+            self.assertEqual(stored, {"PLEX_TOKEN": "hunter2-value"})
+            self.assertNotIn("hunter2", out.getvalue())  # the value is never printed, so it never reaches the model
+            with mock.patch.object(shield, "prompt_dialog", return_value=None):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(shield.cli(["prompt", "PLEX_TOKEN"]), 3)
+            self.assertIn("Paste the plex token as your next message", out.getvalue())  # no screen: the paste path, said plainly
+
+    def test_no_screen_means_no_box(self):
+        from lantern_core import shield
+        with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(shield.sys, "platform", "linux"):
+            os.environ.pop("DISPLAY", None)
+            os.environ.pop("WAYLAND_DISPLAY", None)
+            self.assertIsNone(shield.prompt_dialog("X"))
