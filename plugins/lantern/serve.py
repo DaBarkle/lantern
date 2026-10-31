@@ -9,6 +9,7 @@ the rest exit. Exits by itself after half an hour without a search, so a machine
 resident model. Listens on 127.0.0.1 only and answers only requests carrying the token from the user's data folder.
 """
 import json
+import os
 import secrets
 import socket
 import sys
@@ -120,14 +121,58 @@ def main() -> int:
 
     threading.Thread(target=sync_loop, daemon=True).start()
     used = [time.monotonic()]
+    born = {"code": _code_stamp(), "wall": time.time()}
+
+    def watchdog():
+        # A server once ran 22 h at 1.2 GB after it should have gone idle: its clients had moved to a new port, and a
+        # process that has run the model can hang on its way out. The watchdog decides from outside the accept loop
+        # and ends the process outright.
+        while True:
+            time.sleep(WATCH_SECONDS)
+            why = stale(time.monotonic() - used[0], time.time() - born["wall"], born["code"], _code_stamp(), port,
+                        semantic.port_for(data), token, _read(semantic._token_path(data)))
+            if why:
+                print(f"lantern serve: exiting, {why}", file=sys.stderr, flush=True)
+                os._exit(0)
+
+    threading.Thread(target=watchdog, daemon=True).start()
     sock.settimeout(60)
-    while time.monotonic() - used[0] < IDLE_SECONDS:
+    while True:
         try:
             conn, _ = sock.accept()
         except socket.timeout:
             continue
         threading.Thread(target=handle, args=(conn, index, token, used), daemon=True).start()
-    return 0
+
+
+WATCH_SECONDS = 30
+MAX_HOURS = 12  # even a busy server is replaced twice a day: a long-lived process is where leaks collect
+
+
+def _code_stamp() -> float:
+    return max(f.stat().st_mtime for f in [Path(__file__), *Path(__file__).parent.joinpath("lantern_core").glob("*.py")])
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return ""
+
+
+def stale(idle_s: float, age_s: float, code_then: float, code_now: float, port: int, port_now: int, token: str, token_now: str) -> str | None:
+    """Why this server should stop now, or None. Pure, so it is tested without a model."""
+    if idle_s > IDLE_SECONDS:
+        return f"no search for {idle_s / 60:.0f} min"
+    if age_s > MAX_HOURS * 3600:
+        return f"running {age_s / 3600:.0f} h; the next prompt starts a fresh one"
+    if code_now > code_then:
+        return "Lantern was updated; the next prompt starts a server on the new code"
+    if port_now != port:
+        return "clients now look for the server on another port"
+    if token_now != token:
+        return "another server took over this folder's key"
+    return None
 
 
 if __name__ == "__main__":
