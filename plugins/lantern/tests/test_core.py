@@ -351,4 +351,4 @@ class LoopsTest(unittest.TestCase):
     def test_offers_outlast_small_talk_when_a_reply_has_many(self):
         from lantern_core import memory
         reply = "Next, I can save the Hermes changes now. " + " ".join(f"Is item {n} right?" for n in range(12))
-        self.assertIn("Next, I can save the Hermes changes now", memory.open_loops(reply))
+        self.assertTrue(memory.open_loops(reply)[0].startswith("Next, I can save the Hermes changes now"))  # first, not cut by the cap

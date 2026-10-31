@@ -372,7 +372,7 @@ def open_loops(reply: str, limit: int = 8) -> list[str]:
         loop = (m.group(1) or m.group(2) or m.group(3)).strip().rstrip(".")
         if len(loop.split()) <= 5 and len(_content(loop)) < 2:
             before = [x for x in re.split(r"(?<=[.!?])\s+|\n+", reply[:m.start()].strip()) if x.strip()]
-            if before:
+            if before and not before[-1].rstrip().endswith("?"):  # a question before it is its own loop, not a referent
                 prev = before[-1].strip().rstrip(".")
                 out = [o for o in out if o != prev]  # "I can save them now. Want me to?" is one offer, not two
                 loop = f"{prev}. {loop}"
