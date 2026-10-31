@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased (0.5.0)
+## 0.5.0 (2026-10-31)
 
-Lantern learns from ordinary use. Nothing to run, no simulations, no extra model calls per turn.
+Lantern learns from ordinary use and speaks plainly to someone who is not technical. Nothing to run, no simulations, no
+extra model calls per turn.
 
 - The nightly curate reads the whole day in up to four parts. Before, a heavy day lost everything but its newest part.
 - A rule you have to say again is counted. It moves to the top of the rules and says how many times you said it.
@@ -12,6 +13,12 @@ Lantern learns from ordinary use. Nothing to run, no simulations, no extra model
 - One approval, never two: a yes given in the question tool covers the restart a rule guards. The container guard's dialog speaks to you.
 - An unfinished item that points at its own reply ("the first warning above") keeps the request it came from.
 - A Stop-hook follow-up reads as the reply's next paragraph, not as a correction of it.
+- Search by meaning works on Fedora Atomic again: one memory server per data folder however its path is spelt, with a key per port.
+- The plain-words check on replies fires again, and catches paths, unit names and "do it from Windows".
+- The status line speaks plainly: what a finding means for you ("your drive is nearly full"), no note counts, no system chores you cannot act on.
+- A returning session says in one plain sentence what Lantern picked up about you.
+- "Any problems?" and "what should I be worried about?" are answered from the watches, like "is everything ok?".
+- A failed nightly job reruns at the next session and clears once it succeeds. Old errors from replaced code and moved project folders stop raising warnings.
 
 ## 0.4.0 (2026-10-31)
 
