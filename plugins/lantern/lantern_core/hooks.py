@@ -23,6 +23,7 @@ PROFILE_CHARS = 3000
 RULES_CHARS = 12000
 INDEX_CHARS = 20000  # one short line per curated note, so a session knows what memory holds before it asks
 TOP_CHARS = 1500
+ROUTINE_CHARS = 1500
 TITLE_LIMIT = 7  # after the full notes, further matches as one-line titles  # Hermes loaded a ~23k-char memory index every session; one line per rule is leaner
 RESUME_HOURS = memory.RESUME_HOURS
 AGENT_CHARS = 1500
@@ -34,7 +35,7 @@ CORRECTION = re.compile(r"^\s*(?:please\s+)?(?:do not|don't|dont|never|always|fr
                         r"stop (?:doing|using|making|trying|asking|adding|suggesting)|i(?:'ve| have)? told you|i said|i asked you|"
                         r"remember that)\b", re.I)
 KIND_WEIGHT = {"fact": 1.5, "pattern": 1.5, "note": 1.2}  # curated facts and why-notes outrank raw turn logs
-CURATED = {"fact", "rule", "pattern", "doc"}
+CURATED = {"fact", "rule", "pattern", "doc", "routine"}
 CURATED_MIN_TERMS = 9
 
 
@@ -206,6 +207,7 @@ def session_start(payload: dict) -> dict | None:
         rules = memory.rules(db, RULES_CHARS)
         index = memory.rules(db, INDEX_CHARS, kind="fact", dated=True)
         patterns = memory.rules(db, INDEX_CHARS // 2, kind="pattern", dated=True)
+        routines = memory.rules(db, ROUTINE_CHARS, kind="routine")
         session = payload.get("session_id", "?")
         cwd = payload.get("cwd") or ""
         previous = memory.previous_session(db, session, cwd)
@@ -235,6 +237,10 @@ def session_start(payload: dict) -> dict | None:
         lines += ["", "The user's standing rules and preferences (from past sessions):"] + [f"- {r}" for r in rules]
     if patterns:
         lines += ["", "How the user's systems are worked on (patterns learned from past sessions):"] + [f"- {p}" for p in patterns]
+    if routines:
+        lines += ["", "Checks the user keeps asking for (learned from past sessions). When the user's first message touches one, or "
+                  "they ask how things are, do it unasked if it only reads, and say it in one line; one that would change "
+                  "anything stays an offer:"] + [f"- {r}" for r in routines]
     machine = discovery.summary()
     if machine:
         lines += ["", "This machine, as Lantern found it: " + machine + "."]
@@ -510,6 +516,12 @@ def user_prompt_submit(payload: dict) -> dict | None:
         if len(hits) == RECALL_LIMIT + TITLE_LIMIT:
             break
     hits, titles = hits[:RECALL_LIMIT], hits[RECALL_LIMIT:]
+    if hits:
+        db = memory.connect()
+        try:
+            memory.used(db, [h["id"] for h in hits if h["kind"] in CURATED])  # curated notes that keep being needed stay in the index
+        finally:
+            db.close()
     _log("recall", {"fired": bool(hits), "hits": [h["id"] for h in hits],
                     "keyword": len(keyword), "semantic": len(meaning)})
     lines = []
@@ -576,11 +588,15 @@ def user_prompt_submit(payload: dict) -> dict | None:
         lines.append(progress)
     if answered:
         lines += [answered]
-    if noted:
+    if noted and noted < 0:
+        lines += ["The user just had to repeat a standing rule Lantern already held. Say in a few words that you have it and follow "
+                  "it; Lantern now puts it first among the rules."]
+    elif noted:
         lines += ["Lantern stored this message as a standing rule for future sessions; acknowledge it in a few words."]
     reply = _context("UserPromptSubmit", "\n".join(lines)) if lines else {}
     if noted:
-        reply["systemMessage"] = "Lantern noted a standing rule from your message."
+        reply["systemMessage"] = ("Lantern already had this rule; it now comes first." if noted < 0
+                                  else "Lantern noted a standing rule from your message.")
     return reply or None
 
 
@@ -630,9 +646,10 @@ def note_correction(db, session: str, prompt: str) -> int | None:
     if not (15 <= len(text) <= 400) or "?" in text or not CORRECTION.match(text) or shield.find(text):
         return None
     words = set(memory.terms(text))
-    for _, line in memory.rule_items(db):
+    for i, line in memory.rule_items(db):
         if len(words & set(memory.terms(line))) >= 0.7 * max(1, len(words)):
-            return None  # already a rule
+            memory.used(db, [i], "repeated")  # already a rule, and the user had to say it again: it leads the rules from now on
+            return -i
     return memory.add(db, "rule", f"said:{session}", text)
 
 

@@ -404,7 +404,13 @@ class LedgerTest(unittest.TestCase):
         ctx = self.call("session-start", {"session_id": "s2"})["hookSpecificOutput"]["additionalContext"]
         self.assertIn("- don't restart plex without asking me first", ctx)
         again = self.call("user-prompt-submit", {"session_id": "s2", "prompt": "don't restart plex without asking me first"})
-        self.assertTrue(again is None or "systemMessage" not in again)  # already known
+        self.assertIn("already had this rule", again["systemMessage"])  # known, but the user had to say it again
+        self.assertIn("had to repeat", again["hookSpecificOutput"]["additionalContext"])
+        ctx = self.call("session-start", {"session_id": "s3"})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("- don't restart plex without asking me first (the user has had to say this 2 times)", ctx)
+        db = memory.connect()
+        self.assertEqual(sum(1 for _ in db.execute("SELECT 1 FROM items WHERE kind='rule' AND text LIKE 'don''t restart plex%'")), 1)
+        db.close()
 
     def test_subagent_result_is_captured(self):
         p = Path(self.tmp.name) / "agent.jsonl"

@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS ledger (
   updated REAL NOT NULL,
   data TEXT NOT NULL             -- JSON: goal, last, files, commands, agents, failed, turns
 );
+CREATE TABLE IF NOT EXISTS uses (
+  id INTEGER PRIMARY KEY,        -- items.id
+  recalled INTEGER NOT NULL DEFAULT 0,  -- times recall brought it into a turn
+  repeated INTEGER NOT NULL DEFAULT 0,  -- times the user had to say it again
+  last REAL NOT NULL DEFAULT 0
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(text, content='items', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
   INSERT INTO items_fts(rowid, text) VALUES (new.id, new.text);
@@ -74,6 +80,26 @@ def add_document(db: sqlite3.Connection, kind: str, source: str, text: str, crea
 def supersede(db: sqlite3.Connection, item_id: int) -> None:
     with db:
         db.execute("UPDATE items SET status='superseded' WHERE id=?", (item_id,))
+
+
+def used(db: sqlite3.Connection, ids: list[int], field: str = "recalled", now: float | None = None) -> None:
+    """Count a use of each item: recall brought it into a turn, or the user had to say it again."""
+    assert field in ("recalled", "repeated")
+    with db:
+        for i in ids:
+            db.execute(f"INSERT INTO uses(id, {field}, last) VALUES (?, 1, ?) ON CONFLICT(id) DO UPDATE SET {field}={field}+1, last=excluded.last",
+                       (i, now or time.time()))
+
+
+def uses(db: sqlite3.Connection, ids: list[int]) -> dict[int, tuple[int, int]]:
+    """{id: (recalled, repeated)} for the items that have been used."""
+    if not ids:
+        return {}
+    return {r[0]: (r[1], r[2]) for r in db.execute(f"SELECT id, recalled, repeated FROM uses WHERE id IN ({','.join('?' * len(ids))})", ids)}
+
+
+USE_DAYS = 7  # each recall keeps a note in the session index as if it were a week newer (capped), so used notes stay and unused ones age out
+USE_CAP = 20
 
 
 def terms(text: str) -> list[str]:
@@ -138,9 +164,15 @@ def rules(db: sqlite3.Connection, max_chars: int, kind: str = "rule", dated: boo
     out, used = [], 0
     # A long item is stored in chunks; its first chunk (lowest id) opens with the summary line.
     # Discovery cards are summarised elsewhere; the index is for what was learned and curated.
-    for text, created in db.execute("SELECT text, created FROM items WHERE id IN (SELECT min(id) FROM items WHERE kind=? "
-                                    "AND status='active' AND source NOT LIKE 'discovery:%' GROUP BY source) ORDER BY created DESC", (kind,)):
+    rows = db.execute("SELECT items.id, text, created, coalesce(recalled, 0), coalesce(repeated, 0) FROM items LEFT JOIN uses ON uses.id = items.id "
+                      "WHERE items.id IN (SELECT min(id) FROM items WHERE kind=? AND status='active' AND source NOT LIKE 'discovery:%' "
+                      "GROUP BY source)", (kind,)).fetchall()
+    # A rule the user had to repeat comes first; otherwise newest first, with a note that keeps being recalled counted as newer.
+    rows.sort(key=lambda r: (r[4] > 0, r[2] + min(r[3], USE_CAP) * USE_DAYS * 86400), reverse=True)
+    for _, text, created, _, repeated in rows:
         line = text.strip().splitlines()[0][:INDEX_LINE if dated else 300] if text.strip() else ""
+        if repeated and line and kind == "rule":
+            line += f" (the user has had to say this {repeated + 1} times)"
         if dated and line:
             # A note about a state ("SABnzbd is stopped") goes stale in days; a note about a design does not.
             stale = _STATE.search(line) and ((now or time.time()) - created) > STATE_FRESH_DAYS * 86400
@@ -169,7 +201,7 @@ def rules_touching(db: sqlite3.Connection, prompt: str, limit: int = 2) -> list[
 
 def learned_since(db: sqlite3.Connection, since: float, limit: int = 6) -> list[str]:
     """Rules, facts, patterns and profile lines curated or stated since a time, newest first (not discovery cards)."""
-    rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile') AND status='active' "
+    rows = db.execute("SELECT kind, text FROM items WHERE kind IN ('rule','fact','pattern','profile','routine') AND status='active' "
                       "AND created > ? AND source NOT LIKE 'discovery:%' ORDER BY created DESC LIMIT ?", (since, limit))
     return [f"[{k}] {t.strip().splitlines()[0][:160]}" for k, t in rows if t.strip()]
 
